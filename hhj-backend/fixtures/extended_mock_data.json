@@ -1,0 +1,376 @@
+[
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000001",
+    "fields": {
+      "name": "Thunderbolt",
+      "description": "A fast and agile hobby horse",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000011",
+    "fields": {
+      "name": "Lightning Storm",
+      "description": "Quick and responsive",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000012",
+    "fields": {
+      "name": "Moonbeam",
+      "description": "Graceful and elegant",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000013",
+    "fields": {
+      "name": "Star Dancer",
+      "description": "Perfect for technical courses",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000014",
+    "fields": {
+      "name": "Wild Wind",
+      "description": "Energetic and spirited",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000015",
+    "fields": {
+      "name": "Shadow Runner",
+      "description": "Stealthy and swift",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000002", 
+    "fields": {
+      "name": "Emma Johnson",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000021",
+    "fields": {
+      "name": "Sarah Miller",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000022",
+    "fields": {
+      "name": "Ashley Davis",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000023",
+    "fields": {
+      "name": "Jessica Wilson",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000024",
+    "fields": {
+      "name": "Madison Brown",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000025",
+    "fields": {
+      "name": "Taylor Anderson",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000026",
+    "fields": {
+      "name": "Morgan Thomas",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000027",
+    "fields": {
+      "name": "Alexis Garcia",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000028",
+    "fields": {
+      "name": "Jordan Martinez",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000029",
+    "fields": {
+      "name": "Casey Rodriguez",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.judge",
+    "pk": "01234567-abcd-4000-8000-000000000003",
+    "fields": {
+      "name": "Judge Elizabeth Stone",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.judge",
+    "pk": "01234567-abcd-4000-8000-000000000031",
+    "fields": {
+      "name": "Judge Michael Foster",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.judge",
+    "pk": "01234567-abcd-4000-8000-000000000032",
+    "fields": {
+      "name": "Judge Rebecca Turner",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.course",
+    "pk": "01234567-abcd-4000-8000-000000000004",
+    "fields": {
+      "name": "Speed Course A",
+      "description": "Fast-paced course with 8 obstacles designed for speed competitions"
+    }
+  },
+  {
+    "model": "events.course",
+    "pk": "01234567-abcd-4000-8000-000000000041",
+    "fields": {
+      "name": "Technical Course B",
+      "description": "Challenging technical course with tight turns and complex combinations"
+    }
+  },
+  {
+    "model": "events.course",
+    "pk": "01234567-abcd-4000-8000-000000000042",
+    "fields": {
+      "name": "Beginner Course C",
+      "description": "Introductory course perfect for new riders"
+    }
+  },
+  {
+    "model": "events.event",
+    "pk": "01234567-abcd-4000-8000-000000000005",
+    "fields": {
+      "name": "Winter Championship 2024",
+      "start_date": "2024-12-01",
+      "end_date": "2024-12-02",
+      "location": "Grand Arena Complex"
+    }
+  },
+  {
+    "model": "events.event",
+    "pk": "01234567-abcd-4000-8000-000000000051",
+    "fields": {
+      "name": "Spring Festival 2025",
+      "start_date": "2025-03-15",
+      "end_date": "2025-03-16",
+      "location": "Meadowbrook Equestrian Center"
+    }
+  },
+  {
+    "model": "events.competition",
+    "pk": "01234567-abcd-4000-8000-000000000006",
+    "fields": {
+      "name": "Junior Speed Round",
+      "event": "01234567-abcd-4000-8000-000000000005",
+      "start_date_time": "2024-12-01T10:00:00Z",
+      "arena_size": "20x40m",
+      "height_class": "60cm",
+      "time_limit": 90,
+      "description": "Fast-paced competition for junior riders",
+      "course": "01234567-abcd-4000-8000-000000000004"
+    }
+  },
+  {
+    "model": "events.competition",
+    "pk": "01234567-abcd-4000-8000-000000000061",
+    "fields": {
+      "name": "Advanced Technical Round",
+      "event": "01234567-abcd-4000-8000-000000000005",
+      "start_date_time": "2024-12-01T14:00:00Z",
+      "arena_size": "25x50m",
+      "height_class": "80cm",
+      "time_limit": 120,
+      "description": "Technical course for experienced riders",
+      "course": "01234567-abcd-4000-8000-000000000041"
+    }
+  },
+  {
+    "model": "events.competition",
+    "pk": "01234567-abcd-4000-8000-000000000062",
+    "fields": {
+      "name": "Beginner Showcase",
+      "event": "01234567-abcd-4000-8000-000000000051",
+      "start_date_time": "2025-03-15T09:00:00Z",
+      "arena_size": "15x30m",
+      "height_class": "40cm",
+      "time_limit": 60,
+      "description": "Showcase for beginner riders",
+      "course": "01234567-abcd-4000-8000-000000000042"
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000070",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000006",
+      "participant": "01234567-abcd-4000-8000-000000000002",
+      "starting_order": 1,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000071",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000006",
+      "participant": "01234567-abcd-4000-8000-000000000021",
+      "starting_order": 2,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000072",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000006",
+      "participant": "01234567-abcd-4000-8000-000000000022",
+      "starting_order": 3,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000073",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000006",
+      "participant": "01234567-abcd-4000-8000-000000000023",
+      "starting_order": 4,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000074",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000006",
+      "participant": "01234567-abcd-4000-8000-000000000024",
+      "starting_order": 5,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000075",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000006",
+      "participant": "01234567-abcd-4000-8000-000000000025",
+      "starting_order": 6,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000076",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000061",
+      "participant": "01234567-abcd-4000-8000-000000000026",
+      "starting_order": 1,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000077",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000061",
+      "participant": "01234567-abcd-4000-8000-000000000027",
+      "starting_order": 2,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000078",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000061",
+      "participant": "01234567-abcd-4000-8000-000000000028",
+      "starting_order": 3,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000079",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000061",
+      "participant": "01234567-abcd-4000-8000-000000000029",
+      "starting_order": 4,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  }
+]

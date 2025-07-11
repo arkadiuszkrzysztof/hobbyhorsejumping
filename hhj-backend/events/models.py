@@ -169,6 +169,9 @@ class CompetitionStart(models.Model):
   starting_order = models.IntegerField(default=0)
   has_started = models.BooleanField(default=False)
   has_finished = models.BooleanField(default=False)
+  is_paused = models.BooleanField(default=False)
+  total_pause_time = models.IntegerField(default=0)  # Total pause time in milliseconds
+  pause_start_time = models.IntegerField(null=True, blank=True)  # When current pause started
   completion_time = models.TimeField(null=True, blank=True)
   penalty_points = models.IntegerField(default=0)
   is_eliminated = models.BooleanField(default=False)

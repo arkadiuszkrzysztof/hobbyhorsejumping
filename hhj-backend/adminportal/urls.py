@@ -19,8 +19,10 @@ from django.urls import path
 from debug_toolbar.toolbar import debug_toolbar_urls
 from django.urls import include
 import timings.urls
+import events.urls
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include(timings.urls))
+    path('', include(timings.urls)),
+    path('api/', include(events.urls)),
 ] + debug_toolbar_urls()

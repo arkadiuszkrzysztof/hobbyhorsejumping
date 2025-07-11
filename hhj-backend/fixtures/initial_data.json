@@ -1,0 +1,72 @@
+[
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000001",
+    "fields": {
+      "name": "Thunderbolt",
+      "description": "Default hobby horse for testing",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000002", 
+    "fields": {
+      "name": "Test Rider",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.judge",
+    "pk": "01234567-abcd-4000-8000-000000000003",
+    "fields": {
+      "name": "Default Judge",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.course",
+    "pk": "01234567-abcd-4000-8000-000000000004",
+    "fields": {
+      "name": "Default Course",
+      "description": "Simple test course for timing system"
+    }
+  },
+  {
+    "model": "events.event",
+    "pk": "01234567-abcd-4000-8000-000000000005",
+    "fields": {
+      "name": "Default Championship",
+      "start_date": "2024-01-01",
+      "end_date": "2024-01-01",
+      "location": "Test Arena"
+    }
+  },
+  {
+    "model": "events.competition",
+    "pk": "01234567-abcd-4000-8000-000000000006",
+    "fields": {
+      "name": "Speed Round",
+      "event": "01234567-abcd-4000-8000-000000000005",
+      "start_date_time": "2024-01-01T10:00:00Z",
+      "arena_size": "20x40m",
+      "height_class": "60cm",
+      "time_limit": 120,
+      "description": "Default speed competition for testing",
+      "course": "01234567-abcd-4000-8000-000000000004"
+    }
+  },
+  {
+    "model": "events.competitionstart", 
+    "pk": "01234567-abcd-4000-8000-000000000007",
+    "fields": {
+      "competition": "01234567-abcd-4000-8000-000000000006",
+      "participant": "01234567-abcd-4000-8000-000000000002",
+      "starting_order": 1,
+      "has_started": false,
+      "has_finished": false,
+      "penalty_points": 0,
+      "is_eliminated": false
+    }
+  }
+]

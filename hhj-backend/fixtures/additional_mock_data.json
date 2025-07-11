@@ -1,0 +1,307 @@
+[
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000020",
+    "fields": {
+      "name": "Midnight Runner",
+      "description": "Fast and steady",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000021",
+    "fields": {
+      "name": "Golden Arrow",
+      "description": "Precise and focused",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000022",
+    "fields": {
+      "name": "Silver Comet",
+      "description": "Smooth and reliable",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000023",
+    "fields": {
+      "name": "Flame Dancer",
+      "description": "Fiery and spirited",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000024",
+    "fields": {
+      "name": "Ocean Wave",
+      "description": "Fluid and graceful",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000030",
+    "fields": {
+      "name": "Alex Thompson",
+      "is_active": true,
+      "hobby_horses": ["01234567-abcd-4000-8000-000000000020"]
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000031",
+    "fields": {
+      "name": "Morgan Casey",
+      "is_active": true,
+      "hobby_horses": ["01234567-abcd-4000-8000-000000000021"]
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000032",
+    "fields": {
+      "name": "Jamie Rodriguez",
+      "is_active": true,
+      "hobby_horses": ["01234567-abcd-4000-8000-000000000022"]
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000033",
+    "fields": {
+      "name": "River Kim",
+      "is_active": true,
+      "hobby_horses": ["01234567-abcd-4000-8000-000000000023"]
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000034",
+    "fields": {
+      "name": "Sage Williams",
+      "is_active": true,
+      "hobby_horses": ["01234567-abcd-4000-8000-000000000024"]
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000035",
+    "fields": {
+      "name": "Phoenix Taylor",
+      "is_active": true,
+      "hobby_horses": ["01234567-abcd-4000-8000-000000000001"]
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000036",
+    "fields": {
+      "name": "Quinn Martinez",
+      "is_active": true,
+      "hobby_horses": ["01234567-abcd-4000-8000-000000000011"]
+    }
+  },
+  {
+    "model": "events.competition",
+    "pk": "01234567-abcd-4000-8000-000000000040",
+    "fields": {
+      "name": "Advanced 120cm Championship",
+      "height_class": "Advanced 120cm",
+      "description": "Advanced level competition for experienced riders",
+      "time_limit": 90,
+      "start_date_time": "2024-12-31T14:00:00Z",
+      "arena_size": "40m x 20m",
+      "event": "01234567-abcd-4000-8000-000000000005",
+      "course": "01234567-abcd-4000-8000-000000000004"
+    }
+  },
+  {
+    "model": "events.competition",
+    "pk": "01234567-abcd-4000-8000-000000000041",
+    "fields": {
+      "name": "Youth 80cm Challenge",
+      "height_class": "Youth 80cm",
+      "description": "Youth category competition",
+      "time_limit": 70,
+      "start_date_time": "2024-12-31T16:00:00Z",
+      "arena_size": "30m x 20m",
+      "event": "01234567-abcd-4000-8000-000000000005",
+      "course": "01234567-abcd-4000-8000-000000000004"
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000050",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000030",
+      "competition": "01234567-abcd-4000-8000-000000000040",
+      "starting_order": 1,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000051",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000031",
+      "competition": "01234567-abcd-4000-8000-000000000040",
+      "starting_order": 2,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000052",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000032",
+      "competition": "01234567-abcd-4000-8000-000000000040",
+      "starting_order": 3,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000053",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000033",
+      "competition": "01234567-abcd-4000-8000-000000000040",
+      "starting_order": 4,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000054",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000034",
+      "competition": "01234567-abcd-4000-8000-000000000040",
+      "starting_order": 5,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000055",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000035",
+      "competition": "01234567-abcd-4000-8000-000000000040",
+      "starting_order": 6,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000056",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000036",
+      "competition": "01234567-abcd-4000-8000-000000000040",
+      "starting_order": 7,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000060",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000033",
+      "competition": "01234567-abcd-4000-8000-000000000041",
+      "starting_order": 1,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000061",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000034",
+      "competition": "01234567-abcd-4000-8000-000000000041",
+      "starting_order": 2,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000062",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000035",
+      "competition": "01234567-abcd-4000-8000-000000000041",
+      "starting_order": 3,
+      "has_started": false,
+      "has_finished": false,
+      "completion_time": null,
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000063",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000002",
+      "competition": "01234567-abcd-4000-8000-000000000041",
+      "starting_order": 4,
+      "has_started": true,
+      "has_finished": true,
+      "completion_time": "01:05:20",
+      "penalty_points": 0
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000064",
+    "fields": {
+      "participant": "d7f78ed1-aedb-4a5b-b87f-42ecb243abb6",
+      "competition": "01234567-abcd-4000-8000-000000000041",
+      "starting_order": 5,
+      "has_started": true,
+      "has_finished": true,
+      "completion_time": "01:07:48",
+      "penalty_points": 4
+    }
+  },
+  {
+    "model": "events.competitionstart",
+    "pk": "01234567-abcd-4000-8000-000000000065",
+    "fields": {
+      "participant": "01234567-abcd-4000-8000-000000000002",
+      "competition": "01234567-abcd-4000-8000-000000000041",
+      "starting_order": 6,
+      "has_started": true,
+      "has_finished": true,
+      "completion_time": "01:01:40",
+      "penalty_points": 0
+    }
+  }
+]

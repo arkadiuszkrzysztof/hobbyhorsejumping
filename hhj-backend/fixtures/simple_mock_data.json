@@ -1,0 +1,53 @@
+[
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000020",
+    "fields": {
+      "name": "Midnight Runner",
+      "description": "Fast and steady",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000021",
+    "fields": {
+      "name": "Golden Arrow",
+      "description": "Precise and focused",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.hobbyhorse",
+    "pk": "01234567-abcd-4000-8000-000000000022",
+    "fields": {
+      "name": "Silver Comet",
+      "description": "Smooth and reliable",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000030",
+    "fields": {
+      "name": "Alex Thompson",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000031",
+    "fields": {
+      "name": "Morgan Casey",
+      "is_active": true
+    }
+  },
+  {
+    "model": "events.participant",
+    "pk": "01234567-abcd-4000-8000-000000000032",
+    "fields": {
+      "name": "Jamie Rodriguez",
+      "is_active": true
+    }
+  }
+]
