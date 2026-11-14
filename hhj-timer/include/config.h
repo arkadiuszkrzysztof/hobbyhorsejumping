@@ -1,5 +1,5 @@
 // config.h — hhj-timer: how the 4-digit display [D][D][d][d] is wired and how
-// the stopwatch behaves. 4x TPIC6B595 driven by a XIAO ESP32-C3.
+// long a new result blinks. 4x TPIC6B595 driven by a XIAO ESP32-C3.
 //
 // WiFi credentials are shared with the gates: hhj-common/include/hhj/wifi_config.h
 // The UDP port (3004) is part of the protocol: hhj-common/PROTOCOL.md
@@ -26,6 +26,4 @@
 #define SEG_G (1 << 0)
 
 // ------------------------------------------------------------------ LOGIC
-#define MIN_RUN_MS      1000        // a FINISH sooner than 1 s after START is ignored
-#define RUN_TIMEOUT_MS  600000      // 10 min without FINISH = back to ready
-#define RESULT_BLINK_MS 3000        // how long the result blinks after FINISH
+#define RESULT_BLINK_MS 3000        // how long a new result blinks

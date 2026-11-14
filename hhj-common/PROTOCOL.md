@@ -46,7 +46,7 @@ The kind is decided by which of these keys is present (exactly one must be):
 | `st`      | 0..4294967295   | no (0)   | role-specific status, see below                                |
 | `seq`     | 0..4294967295   | no (0)   | gates: sequence number of the last event (0 = none yet)        |
 | `pending` | 0..65535        | no (0)   | gates: events not yet acknowledged by a backend                |
-| `ms`      | 0..4294967295   | no (0)   | timer: running time, or last result, in ms                     |
+| `ms`      | 0..4294967295   | no (0)   | timer: the running time or the result shown, in ms             |
 | `rssi`    | -128..127       | no (0)   | WiFi signal, dBm                                               |
 | `net`     | 0..255          | no (0)   | 0 = primary WiFi, 1 = fallback WiFi                            |
 
@@ -55,7 +55,8 @@ longer than the stuck limit), 8 = ready (both beams have been seen free since
 power-up), 16 = armed (not in the quiet period after an event). A gate is
 "OK" when `st & 15 == 8`.
 
-Timer `st`: 0 = idle, 1 = running, 2 = finished (showing a result).
+Timer `st`: 0 = idle, 1 = running, 2 = finished (showing a result) — what the
+display shows, which is what the backend's SHOW says (idle without one).
 
 Rules:
 
@@ -104,7 +105,11 @@ peer plus one datagram to the subnet broadcast address.
 An ACK never cuts the fast burst short (the timer does not acknowledge).
 The gate keeps at most 8 events; when a 9th arrives the oldest is discarded.
 
-### Receiving (timer, backend)
+### Receiving (backend)
+
+EVENTs are for the backend. The display receives them too (gates send to
+every peer they know, and broadcast) but ignores them: it never times a run
+itself, it shows what the backend tells it (SHOW, below).
 
 The receiver never needs the gate's clock. For every copy it computes, on its
 own clock,
@@ -157,9 +162,9 @@ backend instead of the gates:
 
 - The backend sends a SHOW, unicast, to every `TIMER` it knows: once a second,
   and at once when what should be shown changes.
-- While SHOWs arrive the timer shows what they say. It keeps listening to the
-  gates, but only to be able to carry on alone: after 5 s without a SHOW it
-  goes back to its own stopwatch.
+- While SHOWs arrive the timer shows what they say. Without a SHOW for 5 s —
+  none heard yet, or the backend fell silent, also mid-run — it shows the idle
+  picture (gate status); it never times a run from the gates' EVENTs itself.
 - `IDLE`: the idle picture (gate status). `READY`: `0.00` — a rider is about to
   start. `RUN`: the clock, running from `time_of_arrival - age_ms`; over the
   copies with the same `rev` the smallest such value is kept, a different

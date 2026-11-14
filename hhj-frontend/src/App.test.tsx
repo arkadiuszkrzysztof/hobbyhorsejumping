@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { ArenaState } from './api/types'
 import { App } from './App'
 import { CompetitionStore, ORDER_KEY } from './state/store'
-import { CID, FakeApi, apiWith, entry, makeDeps, makeState, session } from './test/fakes'
+import { CID, FakeApi, RULES, apiWith, entry, makeDeps, makeState, run, session } from './test/fakes'
 
 async function renderApp(api: FakeApi) {
     const deps = makeDeps(api)
@@ -27,10 +27,10 @@ describe('competitor list', () => {
         const state = makeState({
             entries: [
                 entry('e1', 'Zosia', [
-                    { id: 'r1', number: 1, status: 'SAVED', time_ms: 23_450, penalties: ['7', '9B'] },
-                    { id: 'r2', number: 2, status: 'SAVED', time_ms: null, penalties: [] },
+                    run('r1', 23_450, { penalties: ['7', '9B'] }),
+                    run('r2', null, { number: 2 }),
                 ]),
-                entry('e2', 'Kuba', [{ id: 'r3', number: 1, status: 'OPEN', time_ms: null, penalties: [] }]),
+                entry('e2', 'Kuba', [run('r3', null, { status: 'OPEN' })]),
                 entry('e3', 'Ola'),
             ],
             session: session({ run_id: 'r3', entry_id: 'e2' }),
@@ -40,8 +40,8 @@ describe('competitor list', () => {
         const rows = competitorRows()
         expect(rows.map((r) => r.querySelector('.entry-name')!.textContent)).toEqual(['Zosia', 'KubaSELECTED', 'Ola'])
         expect(rows.map((r) => r.querySelector('.entry-pos')!.textContent)).toEqual(['1', '2', '3'])
-        expect(within(rows[0]!).getByText('23.45 · 2 pen')).toBeInTheDocument()
-        expect(within(rows[0]!).getByText('— · 0 pen')).toBeInTheDocument()
+        expect(within(rows[0]!).getByText('23.45 · 8 pts')).toBeInTheDocument()
+        expect(within(rows[0]!).getByText('— · 0 pts')).toBeInTheDocument()
         expect(within(rows[1]!).getByText(/live/)).toBeInTheDocument()
         expect(rows[1]).toHaveClass('entry-selected')
     })
@@ -119,7 +119,7 @@ describe('competitor list', () => {
 
     it('removing warns about saved runs', async () => {
         const state = makeState({
-            entries: [entry('e1', 'Zosia', [{ id: 'r1', number: 1, status: 'SAVED', time_ms: 1, penalties: [] }])],
+            entries: [entry('e1', 'Zosia', [run('r1', 1)])],
         })
         const api = apiWith(state).on('DELETE', '/api/entries/e1/', ok(later({ entries: [] })))
         const { user } = await renderApp(api)
@@ -132,25 +132,23 @@ describe('competitor list', () => {
 
     it('a saved run chip offers reopen', async () => {
         const state = makeState({
-            entries: [entry('e1', 'Zosia', [{ id: 'r1', number: 1, status: 'SAVED', time_ms: 23_450, penalties: ['7'] }])],
+            entries: [entry('e1', 'Zosia', [run('r1', 23_450, { penalties: ['7'] })])],
         })
         const api = apiWith(state).on('POST', '/api/runs/r1/reopen/', ok(later({})))
         const { user } = await renderApp(api)
-        await user.click(screen.getByRole('button', { name: '23.45 · 1 pen' }))
+        await user.click(screen.getByRole('button', { name: '23.45 · 4 pts' }))
         await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reopen to correct' }))
         await waitFor(() => expect(api.callsTo('POST', '/api/runs/r1/reopen/')).toHaveLength(1))
     })
 })
 
 describe('ranking view', () => {
-    const run = (id: string, time_ms: number | null, penalties: string[] = [], number = 1) =>
-        ({ id, number, status: 'SAVED', time_ms, penalties }) as const
     const scored = () =>
         makeState({
             entries: [
-                entry('e1', 'Zosia', [run('r1', 20_000, ['5'])]),
+                entry('e1', 'Zosia', [run('r1', 20_000, { penalties: ['5'] })]),
                 entry('e2', 'Kuba'),
-                entry('e3', 'Ola', [run('r2', 31_000, ['2', '3A']), run('r3', 30_000, [], 2)]),
+                entry('e3', 'Ola', [run('r2', 31_000, { penalties: ['2', '3A'] }), run('r3', 30_000, { number: 2 })]),
                 entry('e4', 'Iga', [run('r4', 24_500)]),
             ],
             selected_entry: 'e2',
@@ -186,7 +184,7 @@ describe('ranking view', () => {
         expect(screen.queryByRole('button', { name: /^Move .* (up|down)$/ })).toBeNull()
         expect(screen.getByRole('button', { name: 'Edit Ola' })).toBeInTheDocument()
         const best = [...document.querySelectorAll('.chip-best')].map((c) => c.textContent)
-        expect(best).toEqual(['24.50 · 0 pen', '30.00 · 0 pen', '20.00 · 1 pen'])
+        expect(best).toEqual(['24.50 · 0 pts', '30.00 · 0 pts', '20.00 · 4 pts'])
     })
 
     it('a competitor can still be selected from the ranking', async () => {
@@ -203,7 +201,7 @@ describe('horse names', () => {
     const withHorses = (patch: Partial<ArenaState> = {}) =>
         makeState({
             entries: [
-                entry('e1', 'Zosia', [{ id: 'r1', number: 1, status: 'SAVED', time_ms: 23_450, penalties: [] }], 'Stormy'),
+                entry('e1', 'Zosia', [run('r1', 23_450)], 'Stormy'),
                 entry('e2', 'Kuba'),
                 entry('e3', 'Ola', [], 'Black Thunder'),
             ],
@@ -311,6 +309,230 @@ describe('horse names', () => {
     })
 })
 
+describe('deselecting', () => {
+    const select = `/api/competitions/${CID}/select/`
+
+    it('clicking the selected competitor again deselects when no session is open', async () => {
+        const api = apiWith(makeState()).on('POST', select, ok(later({ selected_entry: null })))
+        const { user } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: /^Zosia/ }))
+        expect(api.callsTo('POST', select).map((c) => c.body)).toEqual([{ entry: null }])
+        await waitFor(() => expect(screen.getByTestId('current-name')).toHaveTextContent('Nobody selected'))
+        expect(screen.getByRole('button', { name: /Start registering/ })).toBeDisabled()
+        expect(competitorRows().some((r) => r.classList.contains('entry-selected'))).toBe(false)
+    })
+
+    it('not while a session is open for them', async () => {
+        const api = apiWith(makeState({ session: session({ entry_id: 'e1' }) }))
+        const { user } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: /^Zosia/ }))
+        expect(api.callsTo('POST', select)).toEqual([])
+    })
+
+    it('a double click selects, and does not deselect again', async () => {
+        const api = apiWith(makeState()).on('POST', select, ok(later({ selected_entry: 'e2' })))
+        const { user } = await renderApp(api)
+        await user.dblClick(screen.getByRole('button', { name: 'Kuba' }))
+        await waitFor(() => expect(screen.getByTestId('current-name')).toHaveTextContent('Kuba'))
+        expect(api.callsTo('POST', select).map((c) => c.body)).toEqual([{ entry: 'e2' }])
+    })
+})
+
+describe('scoring rules', () => {
+    it('a new competition is created with the time allowed and the usual penalty values, which can be changed', async () => {
+        const made = makeState({ competition: { id: 'c9', name: 'Cup', fence_count: 10, ...RULES, time_allowed: 45, overtime_points: 0.25 } })
+        const api = apiWith(makeState())
+            .on('POST', '/api/competitions/', { status: 201, body: made })
+            .on('GET', '/api/competitions/c9/state/', { body: made })
+        const { user } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: '+ New competition' }))
+        expect(screen.getByRole('textbox', { name: 'Knockdown' })).toHaveValue('4')
+        expect(screen.getByRole('textbox', { name: 'Refusal' })).toHaveValue('4')
+        expect(screen.getByRole('textbox', { name: 'Second over time' })).toHaveValue('0.4')
+        expect(screen.getByRole('textbox', { name: 'Time allowed (s)' })).toHaveValue('')
+
+        await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Cup')
+        await user.clear(screen.getByRole('spinbutton', { name: 'Fences' }))
+        await user.type(screen.getByRole('spinbutton', { name: 'Fences' }), '10')
+        await user.type(screen.getByRole('textbox', { name: 'Time allowed (s)' }), '45')
+        await user.clear(screen.getByRole('textbox', { name: 'Second over time' }))
+        await user.type(screen.getByRole('textbox', { name: 'Second over time' }), '0,25')
+        await user.click(screen.getByRole('button', { name: 'Create' }))
+        await waitFor(() => expect(api.callsTo('POST', '/api/competitions/')).toHaveLength(1))
+        expect(api.callsTo('POST', '/api/competitions/')[0]!.body).toEqual({
+            name: 'Cup',
+            fence_count: 10,
+            time_allowed: 45,
+            knockdown_points: 4,
+            refusal_points: 4,
+            overtime_points: 0.25,
+        })
+    })
+
+    it('a value that is not valid blocks the form', async () => {
+        const { user } = await renderApp(apiWith(makeState()))
+        await user.click(screen.getByRole('button', { name: '+ New competition' }))
+        await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Cup')
+        const create = screen.getByRole('button', { name: 'Create' })
+        expect(create).toBeEnabled()
+        for (const [field, bad] of [
+            ['Time allowed (s)', '45.5'],
+            ['Knockdown', '-1'],
+            ['Refusal', 'x'],
+            ['Second over time', '0.123'],
+        ] as const) {
+            const input = screen.getByRole('textbox', { name: field })
+            const before = (input as HTMLInputElement).value
+            await user.clear(input)
+            await user.type(input, bad)
+            expect(create, `${field} = ${bad}`).toBeDisabled()
+            expect(input).toHaveAttribute('aria-invalid', 'true')
+            await user.clear(input)
+            if (before) await user.type(input, before)
+            expect(create).toBeEnabled()
+        }
+    })
+
+    it('editing shows the current rules and sends the changed ones', async () => {
+        const rules = { ...RULES, time_allowed: 60, knockdown_points: 3 }
+        const state = makeState({ competition: { id: CID, name: 'Saturday open', fence_count: 12, ...rules } })
+        const api = apiWith(state).on('PATCH', `/api/competitions/${CID}/`, ok({ ...state, server_time: state.server_time + 1 }))
+        const { user } = await renderApp(api)
+        expect(screen.getByText(/12 fences · time allowed 60 s/)).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Edit' }))
+        expect(screen.getByRole('textbox', { name: 'Time allowed (s)' })).toHaveValue('60')
+        expect(screen.getByRole('textbox', { name: 'Knockdown' })).toHaveValue('3')
+        await user.clear(screen.getByRole('textbox', { name: 'Time allowed (s)' }))
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+        await waitFor(() => expect(api.callsTo('PATCH', `/api/competitions/${CID}/`)).toHaveLength(1))
+        expect(api.callsTo('PATCH', `/api/competitions/${CID}/`)[0]!.body).toEqual({
+            name: 'Saturday open',
+            fence_count: 12,
+            ...rules,
+            time_allowed: null,
+        })
+    })
+
+    it('the fence panel shows the live score and what the faults cost', async () => {
+        const state = makeState({
+            competition: { id: CID, name: 'x', fence_count: 12, ...RULES, time_allowed: 20 },
+            session: session({ penalties: ['3', '7B'], time_ms: 24_500, fence_points: 8, time_points: 1.6, points: 9.6 }),
+        })
+        await renderApp(apiWith(state))
+        expect(screen.getByTestId('points-now')).toHaveTextContent('8 at fences + 1.6 time = 9.6 pts')
+        expect(screen.getByTestId('save-summary')).toHaveTextContent('24.50 · 9.6 pts (8+1.6)')
+        expect(document.querySelector('.fences-legend')).toHaveTextContent(
+            'knocked down (4 pts) · R: refusal (4 pts) · time allowed 20 s, then 0.4 pts per full second'
+        )
+    })
+})
+
+describe('refusals', () => {
+    it('R under a fence adds a refusal with one click; the fence shows how many', async () => {
+        let count = 0
+        const api = apiWith(makeState({ session: session() })).on('POST', '/api/runs/r-open/refusal/', () => {
+            count = (count + 1) % 3
+            const refusals: Record<string, number> = count ? { '5': count } : {}
+            return ok(makeState({ server_time: 1_800_000_000_100 + count, session: session({ refusals, fence_points: 4 * count, points: 4 * count }) }))
+        })
+        const { user } = await renderApp(api)
+        const r5 = () => screen.getByRole('button', { name: /^Refusal at fence 5/ })
+        expect(r5()).toHaveAttribute('aria-pressed', 'false')
+        expect(r5()).toHaveTextContent(/^R$/)
+
+        await user.click(r5())
+        await waitFor(() => expect(r5()).toHaveAttribute('aria-pressed', 'true'))
+        expect(r5()).toHaveAccessibleName('Refusal at fence 5 (1)')
+        expect(r5().closest('.fence')).toHaveClass('fence-hit')
+        expect(screen.getByRole('button', { name: 'Fence 5' })).toHaveAttribute('aria-pressed', 'false') // not a knockdown
+
+        await user.click(r5())
+        await waitFor(() => expect(r5()).toHaveTextContent('R2'))
+        expect(api.callsTo('POST', '/api/runs/r-open/refusal/').map((c) => c.body)).toEqual([{ fence: '5' }, { fence: '5' }])
+    })
+
+    it('there is one R per fence and it is off without a session', async () => {
+        await renderApp(apiWith(makeState()))
+        const all = screen.getAllByRole('button', { name: /^Refusal at fence/ })
+        expect(all).toHaveLength(12)
+        all.forEach((b) => expect(b).toBeDisabled())
+    })
+})
+
+describe('retire and eliminate', () => {
+    const open = () => apiWith(makeState({ session: session({ penalties: ['2'], fence_points: 4, points: 4 }) }))
+    const saves = (api: FakeApi) => api.callsTo('POST', '/api/runs/r-open/save/').map((c) => c.body)
+
+    it('retire asks where it ended and saves the round as retired there', async () => {
+        const api = open().on('POST', '/api/runs/r-open/save/', ok(later({})))
+        const { user } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: 'Retire…' }))
+        const dialog = await screen.findByRole('dialog')
+        expect(dialog).toHaveTextContent('Retire Zosia?')
+        expect(dialog).toHaveTextContent('try 1, 4 pts so far')
+        expect(within(dialog).getAllByRole('button', { pressed: false })).toHaveLength(12) // the fences
+        await user.click(within(dialog).getByRole('button', { name: '7' }))
+        await user.click(within(dialog).getByRole('button', { name: 'Retire at fence 7' }))
+        await waitFor(() => expect(saves(api)).toEqual([{ outcome: 'RETIRED', fence: '7' }]))
+        expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    it('eliminate without a fence; picking a fence twice takes it back', async () => {
+        const api = open().on('POST', '/api/runs/r-open/save/', ok(later({})))
+        const { user } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: 'Eliminate…' }))
+        const dialog = await screen.findByRole('dialog')
+        expect(dialog).toHaveTextContent('Eliminate Zosia?')
+        await user.click(within(dialog).getByRole('button', { name: '3' }))
+        await user.click(within(dialog).getByRole('button', { name: '3' }))
+        await user.click(within(dialog).getByRole('button', { name: 'Eliminate' }))
+        await waitFor(() => expect(saves(api)).toEqual([{ outcome: 'ELIMINATED' }]))
+    })
+
+    it('cancel and Escape change nothing; both need an open session', async () => {
+        const api = open()
+        const { user } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: 'Retire…' }))
+        await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+        expect(screen.queryByRole('dialog')).toBeNull()
+        await user.click(screen.getByRole('button', { name: 'Eliminate…' }))
+        await screen.findByRole('dialog')
+        await user.keyboard('{Escape}')
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(saves(api)).toEqual([])
+    })
+
+    it('are off without a session', async () => {
+        await renderApp(apiWith(makeState()))
+        expect(screen.getByRole('button', { name: 'Retire…' })).toBeDisabled()
+        expect(screen.getByRole('button', { name: 'Eliminate…' })).toBeDisabled()
+    })
+
+    it('a round that was not completed shows as RET / ELI in the list and in the ranking', async () => {
+        const state = makeState({
+            entries: [
+                entry('e1', 'Zosia', [run('r1', null, { outcome: 'RETIRED', outcome_fence: '7', penalties: ['2'] })]),
+                entry('e2', 'Kuba', [run('r2', 30_000)]),
+                entry('e3', 'Ola', [run('r3', null, { outcome: 'ELIMINATED' })]),
+                entry('e4', 'Iga'),
+            ],
+        })
+        const { user } = await renderApp(apiWith(state))
+        expect(screen.getByRole('button', { name: 'RET @7 · 4 pts' })).toHaveClass('chip-unfinished')
+        expect(screen.getByRole('button', { name: 'ELI · 0 pts' })).toHaveClass('chip-unfinished')
+        await user.click(screen.getByRole('button', { name: 'Ranking' }))
+        expect(competitorRows().map((r) => `${r.querySelector('.entry-pos')!.textContent} ${r.querySelector('.entry-name-text')!.textContent}`)).toEqual([
+            '1 Kuba',
+            'RET Zosia',
+            'ELI Ola',
+            '– Iga',
+        ])
+        // the chip tells the whole story
+        await user.click(screen.getByRole('button', { name: 'RET @7 · 4 pts' }))
+        expect(await screen.findByRole('dialog')).toHaveTextContent('Saved: retired at fence 7, 4 pts — knocked down 2.')
+    })
+})
+
 describe('start bell', () => {
     it('rings when the operator starts registering', async () => {
         const api = apiWith(makeState()).on('POST', `/api/competitions/${CID}/capture/`, ok(later({ session: session() })))
@@ -379,7 +601,7 @@ describe('session controls', () => {
     })
 
     it('fence grid has fence_count blocks in two rows and is disabled without a session', async () => {
-        await renderApp(apiWith(makeState({ competition: { id: CID, name: 'x', fence_count: 13 } })))
+        await renderApp(apiWith(makeState({ competition: { id: CID, name: 'x', fence_count: 13, ...RULES } })))
         const rows = document.querySelectorAll('.fence-row')
         expect([...rows].map((r) => r.querySelectorAll('.fence').length)).toEqual([7, 6])
         expect(screen.getByRole('button', { name: 'Fence 13' })).toBeDisabled()
@@ -446,13 +668,13 @@ describe('signal columns', () => {
 
 describe('save', () => {
     it('saves straight away when there is a time', async () => {
-        const api = apiWith(makeState({ session: session({ time_ms: 23_450, penalties: ['9B', '7'] }) })).on(
+        const api = apiWith(makeState({ session: session({ time_ms: 23_450, penalties: ['9B', '7'], fence_points: 8, points: 8 }) })).on(
             'POST',
             '/api/runs/r-open/save/',
             ok(later({ selected_entry: 'e2' }))
         )
         const { user } = await renderApp(api)
-        expect(screen.getByTestId('save-summary')).toHaveTextContent('23.45 · 2 penalties (7, 9B)')
+        expect(screen.getByTestId('save-summary')).toHaveTextContent('23.45 · 8 pts')
         await user.click(screen.getByRole('button', { name: 'Save & next' }))
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
         await waitFor(() => expect(api.callsTo('POST', '/api/runs/r-open/save/')).toHaveLength(1))
@@ -474,7 +696,7 @@ describe('save', () => {
 
 describe('banners & errors', () => {
     it('shows the busy banner and switches competition', async () => {
-        const other = makeState({ competition: { id: 'c2', name: 'Morning cup', fence_count: 12 } })
+        const other = makeState({ competition: { id: 'c2', name: 'Morning cup', fence_count: 12, ...RULES } })
         const api = apiWith(makeState({ busy: { competition_id: 'c2', competition_name: 'Morning cup' } })).on(
             'GET',
             '/api/competitions/c2/state/',
@@ -516,7 +738,7 @@ describe('banners & errors', () => {
     })
 
     it('first run: no competitions → create form', async () => {
-        const created = makeState({ competition: { id: 'new', name: 'Spring', fence_count: 18 } })
+        const created = makeState({ competition: { id: 'new', name: 'Spring', fence_count: 18, ...RULES } })
         const api = new FakeApi()
             .on('GET', '/api/competitions/', { body: [] })
             .on('POST', '/api/competitions/', { status: 201, body: created })
@@ -531,6 +753,6 @@ describe('banners & errors', () => {
         await user.type(fences, '18')
         await user.click(screen.getByRole('button', { name: 'Create competition' }))
         await screen.findByTestId('current-name')
-        expect(api.callsTo('POST', '/api/competitions/')[0]?.body).toEqual({ name: 'Spring', fence_count: 18 })
+        expect(api.callsTo('POST', '/api/competitions/')[0]?.body).toEqual({ name: 'Spring', fence_count: 18, ...RULES })
     })
 })

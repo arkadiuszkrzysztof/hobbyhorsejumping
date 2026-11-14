@@ -2,6 +2,10 @@
 // interface (pure C++, no Arduino). src/main.cpp only implements TimerHal and
 // calls tick().
 //
+// The display never times a run by itself: the backend does, and tells it
+// what to show (SHOW, remote.h). Only the backend knows whether a session is
+// open and which gate signal counts for it.
+//
 //   T-1  Power-up: all segments lit (8888) for selftest_ms.
 //   T-2  Idle, WiFi down: four middle bars, blinking.
 //   T-3  Idle, WiFi up: two glyphs per gate — START gate on the left pair,
@@ -10,27 +14,29 @@
 //          top bar     the gate is online but not OK (beam blocked / stuck /
 //                      never aligned yet)
 //          bottom bar  the gate has not been heard from for peer_ttl_ms
-//   T-4  Running: the time since the START edge.
-//   T-5  Finished: the result, blinking for result_blink_ms, then steady until
-//        the next START.
+//   T-4  0.00, a running clock and a result are shown only while the backend
+//        says so (T-12). With no backend heard — never, or not for
+//        remote.timeout_ms — the display shows the idle picture (T-2 / T-3),
+//        whatever the gates send.
+//   T-5  A result blinks for result_blink_ms when it appears or changes, then
+//        stays steady for as long as the backend shows it.
 //   T-6  The display is rewritten when the frame changes and at least every
 //        refresh_ms, so a glitched shift register heals by itself.
-//   T-7  Event copies are fed to the Stopwatch with the local arrival time;
-//        everything else about them is the Stopwatch's business.
+//   T-7  Gate EVENTs are not for the display: a well-formed one is ignored.
+//        Gate HELLOs are what the idle picture (T-3) is made of.
 //   T-8  HELLO is sent every hello_ms and right after the link comes up — to
 //        the broadcast address and unicast to every gate heard from — so the
-//        gates learn, and keep knowing, where to unicast.
-//   T-9  Serial console: s = start, f = finish, r = reset, t = lamp test.
+//        gates learn, and keep knowing, where to unicast. Its st / ms say what
+//        is shown: running or finished, with the time, only while the backend
+//        says RUN or RESULT; otherwise idle and 0.
+//   T-9  Serial console: t = lamp test (8888 for lamp_test_ms).
 //   T-10 Malformed datagrams are counted and otherwise ignored.
-//   T-11 The log gets one line whenever an event changes what is shown, and
-//        one line the first time an event is ignored. Further copies of an
-//        event are silent (a gate repeats an unconfirmed event every second
-//        for minutes).
+//   T-11 The log gets one line when the backend takes the display over and
+//        one when it falls silent.
 //   T-12 While a backend sends SHOW datagrams the display shows what they say
-//        (remote.h): 0.00, the running clock, the result (blinking like T-5),
-//        or the idle picture (T-2 / T-3). The gates' events still feed the
-//        own stopwatch, which takes the display back when the backend falls
-//        silent. Taking over and handing back are logged.
+//        (remote.h): IDLE the idle picture, READY 0.00, RUN the running clock,
+//        RESULT the result (T-5). When the backend falls silent the display
+//        goes to the idle picture after remote.timeout_ms, also mid-run.
 //
 // Host tests: test/test_timer_app.cpp and hhj-common/test/test_system.cpp
 #pragma once
@@ -42,7 +48,6 @@
 #include "hhj/link.h"
 #include "hhj/net.h"
 #include "remote.h"
-#include "stopwatch.h"
 
 namespace hhj {
 
@@ -59,10 +64,9 @@ class TimerHal : public NetHal {
 
 struct TimerAppConfig {
   uint32_t boot = 0;                   // random nonce, new on every power-up
-  const char* fw = "1.1.0";
+  const char* fw = "1.2.0";
   Segments segments{};                 // wiring: which bit drives which segment
   bool chain_first_is_left = true;     // wiring: first chip in the chain = left digit
-  StopwatchConfig stopwatch;
   RemoteConfig remote;
   WifiPlanConfig wifi;
   uint32_t hello_ms = kHelloPeriodMs;
@@ -78,11 +82,11 @@ struct TimerAppConfig {
 class TimerApp {
  public:
   TimerApp(TimerHal& hal, const TimerAppConfig& cfg)
-      : hal_(hal), cfg_(cfg), sw_(cfg.stopwatch), remote_(cfg.remote), uplink_(hal, cfg.wifi) {}
+      : hal_(hal), cfg_(cfg), remote_(cfg.remote), uplink_(hal, cfg.wifi) {}
 
   void begin() {
     t_boot_ = hal_.now_ms();
-    logf(hal_, t_boot_, "hhj-timer %s boot %08lx - waiting for START/FINISH on UDP %u", cfg_.fw,
+    logf(hal_, t_boot_, "hhj-timer %s boot %08lx - showing what the backend says, UDP %u", cfg_.fw,
          static_cast<unsigned long>(cfg_.boot), static_cast<unsigned>(kLinkPort));
     begun_ = true;
   }
@@ -92,11 +96,9 @@ class TimerApp {
     const int64_t now = hal_.now_ms();
     keys(now);
     network(now);
-    if (sw_.tick(now)) logf(hal_, now, "no FINISH for %lu ms -> back to ready",
-                            static_cast<unsigned long>(cfg_.stopwatch.run_timeout_ms));
-    const bool remote_now = remote_.active(now);                                                  // T-12
+    const bool remote_now = remote_.active(now);                                                  // T-11
     if (remote_now != was_remote_) {
-      logf(hal_, now, remote_now ? "backend took over the display" : "backend silent -> showing the own stopwatch");
+      logf(hal_, now, remote_now ? "backend took over the display" : "backend silent -> idle picture");
       was_remote_ = remote_now;
     }
     const Frame f = render(now);
@@ -110,7 +112,7 @@ class TimerApp {
     }
   }
 
-  // What is on the display, whoever decides it.
+  // What is on the display: what the backend says, or idle.
   enum class View : uint8_t { Idle, Ready, Running, Result };
   struct Shown {
     View view;
@@ -120,18 +122,12 @@ class TimerApp {
   };
 
   Shown shown(int64_t now) const {
-    if (remote_.active(now)) {                                                                    // T-12
-      switch (remote_.state()) {
-        case Show::Run:    return Shown(View::Running, remote_.shown_ms(now));
-        case Show::Result: return Shown(View::Result, remote_.shown_ms(now), remote_.result_since_ms());
-        case Show::Ready:  return Shown(View::Ready);
-        default:           return Shown(View::Idle);
-      }
-    }
-    switch (sw_.state()) {
-      case Stopwatch::State::Running:  return Shown(View::Running, sw_.shown_ms(now));            // T-4
-      case Stopwatch::State::Finished: return Shown(View::Result, sw_.shown_ms(now), sw_.finished_at_ms());
-      default:                         return Shown(View::Idle);
+    if (!remote_.active(now)) return Shown(View::Idle);                                          // T-4
+    switch (remote_.state()) {                                                                    // T-12
+      case Show::Run:    return Shown(View::Running, remote_.shown_ms(now));
+      case Show::Result: return Shown(View::Result, remote_.shown_ms(now), remote_.result_since_ms());
+      case Show::Ready:  return Shown(View::Ready);
+      default:           return Shown(View::Idle);
     }
   }
 
@@ -160,7 +156,6 @@ class TimerApp {
     return Frame{{l, l, r, r}};
   }
 
-  const Stopwatch& stopwatch() const { return sw_; }
   const Uplink& uplink() const { return uplink_; }
   const RemoteDisplay& remote() const { return remote_; }
   bool gate_online(Role mark, int64_t now) const { return online(mark == Role::Start ? start_gate_ : finish_gate_, now); }
@@ -196,14 +191,7 @@ class TimerApp {
     for (int i = 0; i < kKeysPerTick; i++) {
       const int c = hal_.read_key();
       if (c < 0) break;
-      if (c == 's') {
-        report(now, "START (console)", sw_.manual_start(now));
-      } else if (c == 'f') {
-        report(now, "FINISH (console)", sw_.manual_finish(now));
-      } else if (c == 'r') {
-        sw_.reset(now);
-        logf(hal_, now, "reset");
-      } else if (c == 't') {
+      if (c == 't') {
         lamp_until_ = now + static_cast<int64_t>(cfg_.lamp_test_ms);
         logf(hal_, now, "lamp test");
       }
@@ -229,21 +217,9 @@ class TimerApp {
         rx_invalid_++;
         continue;
       }
-      if (m.kind == Msg::Kind::Event) {
-        const EventMsg& e = m.event;
-        const Stopwatch::Outcome o = sw_.on_event(e.mark, e.boot, e.seq, e.age_ms, now);          // T-7
-        const bool news = o == Stopwatch::Outcome::Started || o == Stopwatch::Outcome::Restarted ||
-                          o == Stopwatch::Outcome::Finished;
-        if (news || first_time_reported(e)) {                                                     // T-11
-          char what[64];
-          snprintf(what, sizeof(what), "%s #%lu (copy %u, age %lu ms)", role_name(e.mark),
-                   static_cast<unsigned long>(e.seq), static_cast<unsigned>(e.n),
-                   static_cast<unsigned long>(e.age_ms));
-          report(now, what, o);
-        }
-      } else if (m.kind == Msg::Kind::Show) {
+      if (m.kind == Msg::Kind::Show) {
         remote_.on_show(m.show, now);                                                             // T-12
-      } else if (m.kind == Msg::Kind::Hello && is_gate(m.hello.role)) {
+      } else if (m.kind == Msg::Kind::Hello && is_gate(m.hello.role)) {                           // T-3; an EVENT: T-7
         GateSeen& g = m.hello.role == Role::Start ? start_gate_ : finish_gate_;
         if (!online(g, now)) logf(hal_, now, "%s gate online", role_name(m.hello.role));
         g.have = true;
@@ -257,44 +233,6 @@ class TimerApp {
       next_hello_ms_ = now + static_cast<int64_t>(cfg_.hello_ms);
       send_hello(now);
     }
-  }
-
-  // True the first time this event is seen here; remembers the last kSeen events.
-  bool first_time_reported(const EventMsg& e) {
-    for (const SeenEvent& s : seen_) {
-      if (s.used && s.mark == e.mark && s.boot == e.boot && s.seq == e.seq) return false;
-    }
-    seen_[seen_next_] = SeenEvent{true, e.mark, e.boot, e.seq};
-    seen_next_ = (seen_next_ + 1) % kSeen;
-    return true;
-  }
-
-  // One log line for an outcome a person would want to know about; a further
-  // copy of a known event that changes nothing (Duplicate / Refined) is silent.
-  void report(int64_t now, const char* what, Stopwatch::Outcome o) {
-    switch (o) {
-      case Stopwatch::Outcome::Finished:
-        log_result(now, what, "");
-        break;
-      case Stopwatch::Outcome::Started:
-      case Stopwatch::Outcome::Restarted:
-        if (sw_.state() == Stopwatch::State::Finished) {
-          log_result(now, what, "its FINISH was already known: ");
-        } else {
-          logf(hal_, now, "%s -> %s", what, o == Stopwatch::Outcome::Started ? "clock started" : "clock restarted");
-        }
-        break;
-      case Stopwatch::Outcome::Buffered: logf(hal_, now, "%s -> does not end a run, noted", what); break;
-      case Stopwatch::Outcome::Old:      logf(hal_, now, "%s -> older than what is shown, ignored", what); break;
-      case Stopwatch::Outcome::Stale:    logf(hal_, now, "%s -> stale, ignored", what); break;
-      default: break;
-    }
-  }
-
-  void log_result(int64_t now, const char* what, const char* note) {
-    const int64_t ms = sw_.shown_ms(now);
-    logf(hal_, now, "%s -> %sRESULT %lld.%02lld s", what, note, static_cast<long long>(ms / 1000),
-         static_cast<long long>((ms % 1000) / 10));
   }
 
   void send_hello(int64_t now) {
@@ -323,7 +261,6 @@ class TimerApp {
 
   TimerHal& hal_;
   TimerAppConfig cfg_;
-  Stopwatch sw_;
   RemoteDisplay remote_;
   Uplink uplink_;
 
@@ -335,14 +272,6 @@ class TimerApp {
   GateSeen start_gate_, finish_gate_;
   Peers gates_;                        // where the gates are, for unicast HELLOs
 
-  static constexpr size_t kSeen = 16;  // two gates, eight events each in their outboxes
-  struct SeenEvent {
-    bool used = false;
-    Role mark = Role::None;
-    uint32_t boot = 0, seq = 0;
-  };
-  SeenEvent seen_[kSeen];
-  size_t seen_next_ = 0;
   Frame shown_{};
   bool shown_valid_ = false;
   int64_t t_shown_ = 0;

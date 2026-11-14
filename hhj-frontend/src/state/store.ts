@@ -1,4 +1,13 @@
-import { ApiError, createApi, type Api, type EntryPatch, type FetchFn, type PickBody } from '../api/client'
+import {
+    ApiError,
+    createApi,
+    type Api,
+    type CompetitionBody,
+    type EntryPatch,
+    type FetchFn,
+    type PickBody,
+    type RoundEnd,
+} from '../api/client'
 import type { ArenaState, CompetitionSummary, Device, LiveMessage } from '../api/types'
 import { nextClockOffset } from '../lib/time'
 import { ringBell } from '../sound'
@@ -375,10 +384,8 @@ export class CompetitionStore {
         return this.perform(key, () => call(rid))
     }
 
-    async createCompetition(name: string, fenceCount: number): Promise<ActionResult> {
-        const result = await this.perform('competition:create', () =>
-            this.api.createCompetition(name, fenceCount)
-        )
+    async createCompetition(body: CompetitionBody): Promise<ActionResult> {
+        const result = await this.perform('competition:create', () => this.api.createCompetition(body))
         if (result.ok) {
             await this.refreshCompetitions()
             this.open(result.state.competition.id)
@@ -387,7 +394,7 @@ export class CompetitionStore {
         return result
     }
 
-    updateCompetition(patch: { name?: string; fence_count?: number }) {
+    updateCompetition(patch: Partial<CompetitionBody>) {
         return this.perform('competition:update', () => this.api.updateCompetition(this.cid, patch))
     }
 
@@ -420,12 +427,22 @@ export class CompetitionStore {
         return this.withRun(`penalty:${fence}`, (rid) => this.api.penalty(rid, fence))
     }
 
+    /** One more refusal at that fence (the server clears them after the second). */
+    refusal(fence: string) {
+        return this.withRun(`refusal:${fence}`, (rid) => this.api.refusal(rid, fence))
+    }
+
     pick(body: PickBody) {
         return this.withRun('pick', (rid) => this.api.pick(rid, body))
     }
 
     save() {
         return this.withRun('save', (rid) => this.api.save(rid))
+    }
+
+    /** Close a round that was not completed: retired from, or eliminated. */
+    endRound(end: RoundEnd) {
+        return this.withRun('save', (rid) => this.api.save(rid, end))
     }
 
     discard() {

@@ -8,7 +8,7 @@
 //   R-1  A SHOW takes the display over, and keeps it for timeout_ms after the
 //        last one.
 //   R-2  Without a SHOW for longer than timeout_ms the display is no longer
-//        remote (the timer's own stopwatch shows again).
+//        remote (the timer shows its idle picture).
 //   R-3  RUN: the clock runs from arrival - age_ms. Over the copies of the
 //        same thing (same rev, still RUN) the smallest such start is kept —
 //        delay only ever makes a copy late. Anything else starts afresh.

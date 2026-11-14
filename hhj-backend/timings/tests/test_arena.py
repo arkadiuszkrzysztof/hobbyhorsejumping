@@ -2,13 +2,15 @@
 which signals count, what the display shows."""
 from unittest import mock
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 
 from events.models import Competition, CompetitionStart, Participant
 from timings import arena, link
 from timings.ingest import ingest_event
 from timings.models import Run, TimeReading
-from timings.tests.helpers import event
+from timings.tests.helpers import USUAL_RULES, event, run_row
 
 T0 = 1_794_000_000_000      # "now" in these tests, epoch ms
 
@@ -82,8 +84,259 @@ class CompetitionTests(ArenaCase):
         rows = arena.list_competitions()
         self.assertEqual([r['name'] for r in rows], ['Later one', 'Saturday open'])
         self.assertEqual(rows[1], {'id': str(self.c.pk), 'name': 'Saturday open', 'fence_count': 12,
-                                   'entries': 2, 'runs': 1})
+                                   **USUAL_RULES, 'entries': 2, 'runs': 1})
         self.assertEqual((rows[0]['entries'], rows[0]['runs'], rows[0]['id']), (0, 0, str(newer.pk)))
+
+
+class RulesTests(ArenaCase):
+    """e2: the time allowed and what the faults cost."""
+
+    def rules(self, competition=None):
+        row = arena.snapshot(competition or self.c)['competition']
+        return {key: row[key] for key in arena.RULES}
+
+    def test_a_new_competition_gets_the_usual_rules_unless_told_otherwise(self):
+        self.assertEqual(self.rules(), USUAL_RULES)
+        other = arena.create_competition('Other', 10, time_allowed=45, knockdown_points=3, refusal_points=2.5,
+                                         overtime_points=0.25)
+        self.assertEqual(self.rules(other), {'time_allowed': 45, 'knockdown_points': 3.0, 'refusal_points': 2.5,
+                                             'overtime_points': 0.25})
+
+    def test_changing_one_rule_keeps_the_others(self):
+        arena.update_competition(self.c, time_allowed=60)
+        arena.update_competition(self.c, overtime_points=1)
+        arena.update_competition(self.c, name='Renamed')
+        self.assertEqual(self.rules(), {**USUAL_RULES, 'time_allowed': 60, 'overtime_points': 1.0})
+        arena.update_competition(self.c, time_allowed=None)                 # no time allowed again
+        self.assertIsNone(self.rules()['time_allowed'])
+
+    def test_the_time_allowed_is_whole_seconds_from_1_to_999(self):
+        for good in (1, 45, 999):
+            arena.update_competition(self.c, time_allowed=good)
+            self.assertEqual(self.rules()['time_allowed'], good)
+        for bad in (0, -5, 1000, 45.5, '45', True, [45]):
+            with self.assertRaises(arena.ArenaError, msg=bad):
+                arena.update_competition(self.c, time_allowed=bad)
+        self.assertEqual(self.rules()['time_allowed'], 999)
+
+    def test_penalty_points_are_0_to_99_99_with_two_decimals_at_most(self):
+        for good in (0, 4, 0.4, 0.25, 99.99, 12.5):
+            arena.update_competition(self.c, knockdown_points=good)
+            self.assertEqual(self.rules()['knockdown_points'], float(good))
+        for bad in (-0.01, 100, 0.123, '4', None, True, [4], float('nan'), float('inf')):
+            for key in arena.RULES[1:]:
+                with self.assertRaises(arena.ArenaError, msg=(key, bad)):
+                    arena.update_competition(self.c, **{key: bad})
+        self.assertEqual(self.rules(), {**USUAL_RULES, 'knockdown_points': 12.5})
+
+    def test_a_bad_rule_creates_no_competition(self):
+        with self.assertRaises(arena.ArenaError):
+            arena.create_competition('Nope', 12, time_allowed=0)
+        self.assertEqual(Competition.objects.count(), 1)
+
+
+class ScoreTests(ArenaCase):
+    """e2: penalty points = knockdowns + refusals + full seconds over the time allowed."""
+
+    def ride(self, entry, ms, knockdowns=(), refusals=()):
+        run = self.open_session(entry)
+        self.signal('START', self.clock + 100)
+        self.signal('FINISH', self.clock + 100 + ms)
+        for fence in knockdowns:
+            arena.toggle_penalty(run, fence)
+        for fence in refusals:
+            arena.cycle_refusal(run, fence)
+        return run
+
+    def points(self, row):
+        return (row['points'], row['fence_points'], row['time_points'])
+
+    def test_the_example_two_knockdowns_and_four_seconds_over_is_9_6_of_which_1_6_for_time(self):
+        (a,) = self.add('Ala')
+        arena.update_competition(self.c, time_allowed=20)
+        run = self.ride(a, 24_500, knockdowns=['3', '7B'])
+        self.assertEqual(self.points(self.session()), (9.6, 8.0, 1.6))      # live, while the session is open
+        self.assertEqual(self.points(arena.snapshot(self.c)['entries'][0]['runs'][0]), (9.6, 8.0, 1.6))
+        arena.save_run(run)
+        self.assertEqual(self.points(arena.snapshot(self.c)['entries'][0]['runs'][0]), (9.6, 8.0, 1.6))
+
+    def test_only_full_seconds_over_the_time_allowed_cost(self):
+        (a,) = self.add('Ala')
+        arena.update_competition(self.c, time_allowed=20)
+        run = self.open_session(a)
+        start = self.signal('START', T0 + 1000)
+        expected = {19_000: 0.0, 20_000: 0.0, 20_990: 0.0, 20_999: 0.0, 21_000: 0.4, 21_999: 0.4, 22_000: 0.8,
+                    23_000: 1.2, 27_000: 2.8, 80_000: 24.0}
+        for ms, time_points in expected.items():
+            finish = self.signal('FINISH', T0 + 1000 + ms)
+            arena.pick(run, finish=str(finish.pk))
+            s = self.session()
+            self.assertEqual((s['time_ms'], s['time_points'], s['points']), (ms, time_points, time_points), ms)
+        self.assertEqual(start.pk, TimeReading.objects.get(pk=start.pk).pk)
+
+    def test_no_time_penalty_without_a_time_allowed_or_without_a_time(self):
+        a, b = self.add('Ala', 'Bea')
+        run = self.ride(a, 90_000)
+        self.assertEqual(self.points(self.session()), (0.0, 0.0, 0.0))      # no time allowed set
+        arena.save_run(run)
+        arena.update_competition(self.c, time_allowed=20)
+        no_time = self.open_session(b)                                      # never crossed a gate
+        arena.toggle_penalty(no_time, '1')
+        self.assertEqual(self.points(self.session()), (4.0, 4.0, 0.0))
+
+    def test_refusals_count_per_refusal_and_the_values_are_the_competitions(self):
+        (a,) = self.add('Ala')
+        arena.update_competition(self.c, time_allowed=30, knockdown_points=3, refusal_points=2.5, overtime_points=0.25)
+        self.ride(a, 33_100, knockdowns=['1', '2', '2A'], refusals=['5', '5', '9'])
+        self.assertEqual(self.points(self.session()), (17.25, 16.5, 0.75))  # 3x3 + 3x2.5, and 3 s over
+
+    def test_changing_the_rules_rescores_saved_runs(self):
+        (a,) = self.add('Ala')
+        run = self.ride(a, 25_000, knockdowns=['4'])
+        arena.save_run(run)
+        self.assertEqual(self.points(arena.snapshot(self.c)['entries'][0]['runs'][0]), (4.0, 4.0, 0.0))
+        arena.update_competition(self.c, time_allowed=22, knockdown_points=1)
+        self.assertEqual(self.points(arena.snapshot(self.c)['entries'][0]['runs'][0]), (2.2, 1.0, 1.2))
+
+    def test_reading_the_state_costs_the_same_number_of_queries_however_many_runs_there_are(self):
+        entries = self.add('Ala', 'Bea', 'Cela')
+        arena.save_run(self.ride(entries[0], 20_000))
+        with CaptureQueriesContext(connection) as few:
+            arena.snapshot(self.c)
+        for entry in entries:
+            for _ in range(3):
+                self.clock += 100_000
+                arena.save_run(self.ride(entry, 20_000, knockdowns=['1']))
+        with CaptureQueriesContext(connection) as many:
+            arena.snapshot(self.c)
+        self.assertEqual(len(many), len(few))
+
+
+class RefusalTests(ArenaCase):
+    def refusals(self):
+        return self.session()['refusals']
+
+    def test_each_click_adds_a_refusal_and_the_third_clears_them(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        arena.cycle_refusal(run, '5')
+        self.assertEqual(self.refusals(), {'5': 1})
+        arena.cycle_refusal(run, '5')
+        self.assertEqual(self.refusals(), {'5': 2})
+        arena.cycle_refusal(run, '5')
+        self.assertEqual(self.refusals(), {})
+
+    def test_fences_are_independent_listed_in_course_order_and_apart_from_knockdowns(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        for fence in ('10', '2', '10', '7'):
+            arena.cycle_refusal(run, fence)
+        arena.toggle_penalty(run, '2')
+        s = self.session()
+        self.assertEqual(list(s['refusals'].items()), [('2', 1), ('7', 1), ('10', 2)])
+        self.assertEqual((s['penalties'], s['fence_points']), (['2'], 20.0))
+        arena.toggle_penalty(run, '2')                                      # taking the knockdown back keeps the refusal
+        self.assertEqual(self.session()['refusals']['2'], 1)
+
+    def test_a_refusal_is_at_a_fence_not_at_one_element_of_it(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        for bad in ('7B', '0', '13', '', 'x', 7, None, ['7']):
+            with self.assertRaises(arena.ArenaError, msg=bad):
+                arena.cycle_refusal(run, bad)
+        self.assertEqual(self.refusals(), {})
+
+    def test_a_saved_run_is_closed_for_refusals_but_keeps_them(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        arena.cycle_refusal(run, '4')
+        arena.save_run(run)
+        with self.assertRaises(arena.Conflict):
+            arena.cycle_refusal(run, '4')
+        row = arena.snapshot(self.c)['entries'][0]['runs'][0]
+        self.assertEqual((row['refusals'], row['points']), ({'4': 1}, 4.0))
+
+
+class OutcomeTests(ArenaCase):
+    """b3 / e1: a round that was not completed is saved as retired or eliminated."""
+
+    def row(self, index=0):
+        return arena.snapshot(self.c)['entries'][index]['runs'][0]
+
+    def test_retiring_keeps_the_penalties_and_where_it_ended_but_gives_no_time(self):
+        a, b = self.add('Ala', 'Bea')
+        run = self.open_session(a)
+        self.signal('START', T0 + 1000)
+        arena.toggle_penalty(run, '2')
+        arena.cycle_refusal(run, '5')
+        self.clock = T0 + 30_000
+        arena.save_run(run, 'RETIRED', '5')
+        snap = arena.snapshot(self.c)
+        self.assertIsNone(snap['session'])
+        self.assertEqual(snap['selected_entry'], str(b.pk))                 # on to the next one, like a save
+        self.assertEqual(self.row(), run_row(8.0, id=str(run.pk), number=1, status='SAVED', time_ms=None,
+                                             penalties=['2'], refusals={'5': 1}, outcome='RETIRED',
+                                             outcome_fence='5'))
+        run.refresh_from_db()
+        self.assertEqual((run.capturing, run.capture_to), (False, T0 + 30_000))
+
+    def test_an_eliminated_round_has_no_time_even_if_both_gates_were_crossed(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        start = self.signal('START', T0 + 1000)
+        finish = self.signal('FINISH', T0 + 21_000)
+        self.assertEqual(self.session()['time_ms'], 20_000)
+        arena.save_run(run, 'ELIMINATED')
+        row = self.row()
+        self.assertEqual((row['outcome'], row['outcome_fence'], row['time_ms'], row['points']),
+                         ('ELIMINATED', '', None, 0.0))
+        run.refresh_from_db()                                               # the signals stay with the run
+        self.assertEqual((run.start_pick_id, run.finish_pick_id), (start.pk, finish.pk))
+
+    def test_the_display_does_not_show_a_result_for_a_round_that_was_not_completed(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        self.signal('START', T0 + 1000)
+        self.signal('FINISH', T0 + 21_000)
+        self.assertEqual(arena.display(T0 + 22_000).state, 'RESULT')
+        arena.save_run(run, 'RETIRED')
+        self.assertEqual(arena.display(T0 + 23_000).state, 'IDLE')
+
+    def test_the_place_where_it_ended_may_be_an_element_and_must_be_a_fence_of_the_course(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        for bad in ('13', '0', 'x', 7, ['7']):
+            with self.assertRaises(arena.ArenaError, msg=bad):
+                arena.save_run(run, 'RETIRED', bad)
+        self.assertEqual(Run.objects.get().status, 'OPEN')
+        arena.save_run(run, 'ELIMINATED', '9B')
+        self.assertEqual(self.row()['outcome_fence'], '9B')
+
+    def test_only_the_three_outcomes_and_a_completed_round_ends_at_no_fence(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        for bad in ('DNF', 'retired', '', None, 1, ['RETIRED']):
+            with self.assertRaises(arena.ArenaError, msg=bad):
+                arena.save_run(run, bad)
+        with self.assertRaises(arena.ArenaError):
+            arena.save_run(run, 'FINISHED', '7')
+        self.assertEqual(Run.objects.get().status, 'OPEN')
+        arena.save_run(run, 'FINISHED', '')                                 # '' and None both mean "no fence"
+        self.assertEqual((self.row()['outcome'], self.row()['outcome_fence']), ('FINISHED', ''))
+
+    def test_reopening_a_retired_round_makes_it_an_ordinary_session_again(self):
+        (a,) = self.add('Ala')
+        run = self.open_session(a)
+        self.signal('START', T0 + 1000)
+        self.signal('FINISH', T0 + 21_000)
+        arena.toggle_penalty(run, '6')
+        arena.save_run(run, 'RETIRED', '6')
+        arena.reopen_run(Run.objects.get())
+        s = self.session()
+        self.assertEqual((s['time_ms'], s['penalties']), (20_000, ['6']))
+        self.assertEqual((self.row()['outcome'], self.row()['outcome_fence']), ('FINISHED', ''))
+        arena.save_run(Run.objects.get())                                   # this time as completed
+        self.assertEqual((self.row()['outcome'], self.row()['time_ms']), ('FINISHED', 20_000))
 
 
 class ListTests(ArenaCase):
@@ -283,7 +536,7 @@ class CaptureTests(ArenaCase):
         self.assertEqual((s['starts'], s['finishes'], s['penalties'], s['time_ms']), ([], [], [], None))
         self.assertEqual((s['start_id'], s['finish_id'], s['start_auto'], s['finish_auto']), (None, None, True, True))
         runs = arena.snapshot(self.c)['entries'][1]['runs']
-        self.assertEqual(runs, [{'id': s['run_id'], 'number': 1, 'status': 'OPEN', 'time_ms': None, 'penalties': []}])
+        self.assertEqual(runs, [run_row(id=s['run_id'], number=1, status='OPEN', time_ms=None, penalties=[])])
 
     def test_needs_a_selected_competitor(self):
         with self.assertRaises(arena.Conflict):
@@ -549,7 +802,7 @@ class SaveTests(ArenaCase):
         self.assertIsNone(snap['session'])
         self.assertEqual(snap['selected_entry'], str(b.pk))
         self.assertEqual(snap['entries'][0]['runs'],
-                         [{'id': str(run.pk), 'number': 1, 'status': 'SAVED', 'time_ms': 23_450, 'penalties': ['7']}])
+                         [run_row(4.0, id=str(run.pk), number=1, status='SAVED', time_ms=23_450, penalties=['7'])])
         run.refresh_from_db()
         self.assertEqual((run.start_pick_id, run.finish_pick_id, run.capturing, run.capture_to),
                          (s1.pk, f1.pk, False, T0 + 30_000))
@@ -565,7 +818,7 @@ class SaveTests(ArenaCase):
         arena.toggle_penalty(run, '3')
         arena.save_run(run)
         self.assertEqual(arena.snapshot(self.c)['entries'][0]['runs'][0],
-                         {'id': str(run.pk), 'number': 1, 'status': 'SAVED', 'time_ms': None, 'penalties': ['3']})
+                         run_row(4.0, id=str(run.pk), number=1, status='SAVED', time_ms=None, penalties=['3']))
 
     def test_after_the_last_competitor_nobody_is_selected(self):
         a, b = self.add('Ala', 'Bea')
@@ -620,7 +873,7 @@ class SaveTests(ArenaCase):
         arena.toggle_penalty(run, '5')
         arena.save_run(run)
         self.assertEqual(arena.snapshot(self.c)['entries'][0]['runs'][0],
-                         {'id': str(run.pk), 'number': 1, 'status': 'SAVED', 'time_ms': 19_000, 'penalties': ['5']})
+                         run_row(4.0, id=str(run.pk), number=1, status='SAVED', time_ms=19_000, penalties=['5']))
         self.assertIsNotNone(s1)
         self.assertIsNotNone(f2)
 
@@ -780,6 +1033,6 @@ class NotifyTests(ArenaCase):
         self.clock = T0 + 123
         snap = arena.snapshot(self.c)
         self.assertEqual(snap['server_time'], T0 + 123)
-        self.assertEqual(snap['competition'], {'id': str(self.c.pk), 'name': 'Saturday open', 'fence_count': 12})
+        self.assertEqual(snap['competition'], {'id': str(self.c.pk), 'name': 'Saturday open', 'fence_count': 12, **USUAL_RULES})
         self.assertEqual(set(snap), {'server_time', 'competition', 'entries', 'selected_entry', 'session',
                                      'busy', 'devices'})

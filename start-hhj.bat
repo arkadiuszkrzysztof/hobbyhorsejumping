@@ -12,6 +12,10 @@ rem      "HHJ console"   http://localhost:3000
 rem  Closing a window stops that part. Running this file again starts
 rem  whatever is not running.
 rem
+rem  On a fresh start (nothing running yet) it first fetches the newest
+rem  version with git pull. Without internet, or if that fails for any other
+rem  reason, it starts the version that is here.
+rem
 rem  Needs on the PATH: Python 3.12 with pipenv, Node.js 20.19+ or 22.12+.
 rem  Packages are installed on the first run and after a lock file changed -
 rem  that needs internet. Every other start works offline.
@@ -20,10 +24,27 @@ rem  and the display cannot reach the server.
 rem ===========================================================================
 setlocal
 set "ROOT=%~dp0"
+title HHJ start
 if /i "%~1"=="backend"  goto backend
 if /i "%~1"=="frontend" goto frontend
+if /i "%~1"=="updated"  goto start
 
-title HHJ start
+rem  Update only when nothing is running: with one part up, new code would reach
+rem  the console at once but the server only after its restart.
+call :answers 3003/api/competitions/
+if not errorlevel 1 goto start
+call :answers 3000/
+if not errorlevel 1 goto start
+cd /d "%ROOT%"
+rem  Never wait for a login window, and give up on a connection that stalls.
+set "GIT_TERMINAL_PROMPT=0"
+set "GCM_INTERACTIVE=never"
+echo Looking for a newer version ...
+rem  The pull may replace this very file, and cmd reads a batch file line by line
+rem  as it goes: so the pull and the fresh start of this file are ONE line.
+git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 pull --ff-only || echo Could not update - starting the version that is here. & "%~f0" updated
+
+:start
 call :answers 3003/api/competitions/
 if errorlevel 1 start "HHJ backend" cmd /k ""%~f0" backend"
 call :answers 3000/

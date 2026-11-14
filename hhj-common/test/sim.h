@@ -6,7 +6,8 @@
 //           WiFi association, its inbox, its log.
 //   NodeHal<Hal>  a Node that implements one of the firmware HAL interfaces.
 //   Probe   a bare node for tests to inject and capture datagrams.
-//   ModelBackend  what hhj-backend does on the wire, per PROTOCOL.md.
+//   ModelBackend  what hhj-backend does on the wire, per PROTOCOL.md: it
+//           stores the gates' events and times the run for the display.
 #pragma once
 #include <algorithm>
 #include <cstdint>
@@ -239,7 +240,8 @@ class Probe final : public NodeHal<hhj::NetHal> {
 };
 
 // The wire behaviour of hhj-backend (PROTOCOL.md): answer HELLOs, store events
-// with the min-latency rule, acknowledge every copy.
+// with the min-latency rule, acknowledge every copy, and tell every display
+// what to show. The display only ever shows what this says.
 class ModelBackend final : public NodeHal<hhj::NetHal> {
  public:
   ModelBackend(World& w, uint32_t address) : NodeHal<hhj::NetHal>(w, address) { connect_delay_ms = 0; }
@@ -257,27 +259,33 @@ class ModelBackend final : public NodeHal<hhj::NetHal> {
   std::map<Key, Reading> readings;
   int hellos = 0, acks = 0, stale = 0, invalid = 0;
 
-  // ---- driving the display (PROTOCOL.md, SHOW): once a second and at once on change
-  enum class Board { Off, Idle, Ready, Run, Result };
-  Board board = Board::Off;      // Off = this backend does not drive displays
-  uint32_t board_rev = 0;
-  int64_t board_start_ms = 0;    // Run: the counting START on THIS node's clock
-  uint32_t board_result_ms = 0;
+  // ---- the session and the display (PROTOCOL.md, SHOW)
+  // No session: IDLE. arm() opens one for the next rider: READY. The first
+  // START cut after that starts the run: RUN, age_ms = now - its edge. The
+  // first FINISH cut after that START ends it: RESULT, ms = FINISH edge -
+  // START edge. Sent to every TIMER heard from, once a second and at once
+  // when it changes (also when another copy improves an edge).
+  enum class Board { Idle, Ready, Run, Result };
+  Board board = Board::Idle;
+  uint32_t board_rev = 0;        // changes with the START / FINISH that count
+  int64_t board_start_ms = 0;    // Run / Result: the counting START on THIS node's clock
+  uint32_t board_result_ms = 0;  // Result
   std::vector<uint32_t> timers;  // where TIMER HELLOs came from
   int shows = 0;
 
-  void show_idle() { board = Board::Idle; board_dirty_ = true; }
-  void show_ready() { board = Board::Ready; board_dirty_ = true; }
-  void show_run(uint32_t rev, int64_t start_on_my_clock) {
-    board = Board::Run; board_rev = rev; board_start_ms = start_on_my_clock; board_dirty_ = true;
+  void arm() {
+    armed_ = true;
+    armed_at_ms_ = node_now();
   }
-  void show_result(uint32_t rev, uint32_t ms) {
-    board = Board::Result; board_rev = rev; board_result_ms = ms; board_dirty_ = true;
-  }
+  void disarm() { armed_ = false; }
 
+  // Off: the process is not running. On: it starts afresh — the stored
+  // readings and the session survive (database), the known displays do not.
   void power(bool on) {
     online = on;
-    if (on) node_wifi_connect(WifiPlan::Net::Primary);
+    if (!on) return;
+    timers.clear();
+    node_wifi_connect(WifiPlan::Net::Primary);
   }
   void join(WifiPlan::Net net) { node_wifi_connect(net); }
 
@@ -336,12 +344,41 @@ class ModelBackend final : public NodeHal<hhj::NetHal> {
         acks++;
       }
     }
+    if (!online) return;
+    follow_session();
     send_show();
   }
 
  private:
+  // What the display should show, from the readings.
+  void follow_session() {
+    const Reading* start = nullptr;
+    const Reading* finish = nullptr;
+    for (const auto& kv : readings) {
+      const Reading& r = kv.second;
+      if (armed_ && r.first.mark == hhj::Role::Start && r.edge_ms >= armed_at_ms_ &&
+          (start == nullptr || r.edge_ms < start->edge_ms)) start = &r;
+    }
+    for (const auto& kv : readings) {
+      const Reading& r = kv.second;
+      if (start != nullptr && r.first.mark == hhj::Role::Finish && r.edge_ms > start->edge_ms &&
+          (finish == nullptr || r.edge_ms < finish->edge_ms)) finish = &r;
+    }
+    const Board b = !armed_ ? Board::Idle : start == nullptr ? Board::Ready : finish == nullptr ? Board::Run : Board::Result;
+    const int64_t start_ms = start == nullptr ? 0 : start->edge_ms;
+    const uint32_t result_ms = finish == nullptr ? 0 : static_cast<uint32_t>(finish->edge_ms - start_ms);
+    if (start != start_ || finish != finish_) board_rev++;
+    if (b != board || start != start_ || finish != finish_ || start_ms != board_start_ms || result_ms != board_result_ms) {
+      board_dirty_ = true;
+    }
+    board = b;
+    start_ = start;
+    finish_ = finish;
+    board_start_ms = start_ms;
+    board_result_ms = result_ms;
+  }
+
   void send_show() {
-    if (!online || board == Board::Off) return;
     const int64_t now = node_now();
     if (!board_dirty_ && now < next_show_ms_) return;
     board_dirty_ = false;
@@ -353,7 +390,6 @@ class ModelBackend final : public NodeHal<hhj::NetHal> {
       case Board::Ready:  s.state = hhj::Show::Ready; break;
       case Board::Run:    s.state = hhj::Show::Run; s.age_ms = static_cast<uint32_t>(now - board_start_ms); break;
       case Board::Result: s.state = hhj::Show::Result; s.ms = board_result_ms; break;
-      case Board::Off:    return;
     }
     char out[120];
     const size_t len = hhj::encode(s, out, sizeof(out));
@@ -363,6 +399,10 @@ class ModelBackend final : public NodeHal<hhj::NetHal> {
     }
   }
 
+  bool armed_ = false;
+  int64_t armed_at_ms_ = 0;
+  const Reading* start_ = nullptr;
+  const Reading* finish_ = nullptr;
   bool board_dirty_ = false;
   int64_t next_show_ms_ = 0;
 };

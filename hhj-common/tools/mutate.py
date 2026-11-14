@@ -36,7 +36,6 @@ TARGETS = {
     'hhj-sensor/outbox.h': ['hhj-sensor/test/test_outbox.cpp'],
     'hhj-sensor/gate_app.h': ['hhj-sensor/test/test_gate_app.cpp', 'hhj-common/test/test_system.cpp'],
     'hhj-timer/include/display.h': ['hhj-timer/test/test_display.cpp'],
-    'hhj-timer/include/stopwatch.h': ['hhj-timer/test/test_stopwatch.cpp'],
     'hhj-timer/include/remote.h': ['hhj-timer/test/test_remote.cpp', 'hhj-timer/test/test_timer_app.cpp'],
     'hhj-timer/include/timer_app.h': ['hhj-timer/test/test_timer_app.cpp', 'hhj-common/test/test_system.cpp'],
 }

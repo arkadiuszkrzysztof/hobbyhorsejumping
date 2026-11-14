@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from django.db import models
 from django.utils import timezone
 
@@ -25,6 +26,13 @@ class Competition(models.Model):
   name = models.CharField(max_length=100)
   start_date_time = models.DateTimeField(default=timezone.now)
   fence_count = models.PositiveSmallIntegerField(default=12)
+  # the time allowed for the course ("norma czasu") in seconds; none = no time penalties
+  time_allowed = models.PositiveSmallIntegerField(null=True, blank=True)
+  # what a fault costs, in penalty points
+  knockdown_points = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal('4'))
+  refusal_points = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal('4'))
+  # ... and every full second over the time allowed
+  overtime_points = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal('0.4'))
   # the competitor highlighted in the operator console: who rides next
   selected_start = models.ForeignKey('CompetitionStart', on_delete=models.SET_NULL, null=True, blank=True,
                                      related_name='+')

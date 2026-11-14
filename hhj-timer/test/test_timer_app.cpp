@@ -13,18 +13,21 @@ namespace {
 
 constexpr uint32_t kStartBoot = 0x51A27u, kFinishBoot = 0xF1215u;
 
-// The timer (192.168.10.20) with two pretend gates (.10 START, .11 FINISH).
+// The timer (192.168.10.20) with two pretend gates (.10 START, .11 FINISH)
+// and a pretend backend (.30) that tells it what to show.
 // The network delay is fixed at 1 ms so that expected times are exact.
 struct Rig {
   sim::World w;
   sim::TimerUnit timer;
-  sim::Probe start_gate, finish_gate;
+  sim::Probe start_gate, finish_gate, backend;
 
-  explicit Rig(uint64_t seed = 1) : w(seed), timer(w, ip(20)), start_gate(w, ip(10)), finish_gate(w, ip(11)) {
+  explicit Rig(const TimerAppConfig& c = sim::TimerUnit::config(0x71AE5u))
+      : timer(w, ip(20), c), start_gate(w, ip(10)), finish_gate(w, ip(11)), backend(w, ip(30)) {
     w.net.unicast_min_ms = w.net.unicast_max_ms = 1;
     w.net.broadcast_min_ms = w.net.broadcast_max_ms = 1;
     start_gate.join();
     finish_gate.join();
+    backend.join();
   }
 
   void run(int64_t ms) {
@@ -49,8 +52,8 @@ struct Rig {
     const size_t n = encode(h, buf, sizeof(buf));
     gate(mark).say(kBroadcast, std::string(buf, n));
   }
-  // One copy of an event whose beam was cut at true time `edge`, sent now, unicast.
-  void event(Role mark, uint32_t seq, int64_t edge) {
+  // One copy of an event whose beam was cut at true time `edge`, sent now.
+  void event(Role mark, uint32_t seq, int64_t edge, uint32_t to = ip(20)) {
     EventMsg e;
     e.mark = mark;
     e.boot = mark == Role::Start ? kStartBoot : kFinishBoot;
@@ -59,21 +62,54 @@ struct Rig {
     e.t_ms = edge;
     char buf[200];
     const size_t n = encode(e, buf, sizeof(buf));
-    gate(mark).say(ip(20), std::string(buf, n));
+    gate(mark).say(to, std::string(buf, n));
   }
-  // Both gates announce themselves as healthy, from now on every 2 s for `ms`.
-  void run_with_gates(int64_t ms) {
-    for (int64_t i = 0; i < ms; i++) {
+  // Call once per ms: what a gate sends for an event cut at `edge` — unicast
+  // and broadcast at 0, 10, 20, 40, 80, 160 and 320 ms, then once a second
+  // (nobody acknowledges it).
+  void repeat_event(Role mark, uint32_t seq, int64_t edge) {
+    const int64_t age = w.t - edge;
+    bool due = age > 320 && age % 1000 == 0;
+    for (int64_t b : {0, 10, 20, 40, 80, 160, 320}) due = due || age == b;
+    if (!due) return;
+    event(mark, seq, edge);
+    event(mark, seq, edge, kBroadcast);
+  }
+  // The backend: one SHOW, sent now.
+  void show(Show state, uint32_t rev = 0, uint32_t age_ms = 0, uint32_t ms = 0) {
+    ShowMsg m;
+    m.state = state;
+    m.rev = rev;
+    m.age_ms = age_ms;
+    m.ms = ms;
+    char buf[120];
+    const size_t n = encode(m, buf, sizeof(buf));
+    backend.say(ip(20), std::string(buf, n));
+  }
+  // The last HELLO the display sent (as heard by the START gate).
+  HelloMsg last_hello() const {
+    Msg m, out;
+    for (const sim::Datagram& d : start_gate.heard) {
+      if (decode(d.data.data(), d.data.size(), &m) && m.kind == Msg::Kind::Hello) out = m;
+    }
+    return out.hello;
+  }
+  // Runs until true time `t`; before every millisecond `traffic()` may send
+  // something, and the gates announce themselves as healthy every 2 s.
+  template <class F>
+  void run_with_gates(int64_t t, F traffic) {
+    while (w.t < t) {
       if (w.t % 2000 == 0) {
         hello(Role::Start);
         hello(Role::Finish);
       }
+      traffic();
       run(1);
     }
   }
 };
 
-}  // namespace
+}                                                 // namespace
 
 // -------------------------------------------------------------- T-1 power-up
 TEST(t1_all_segments_for_the_first_second) {
@@ -84,7 +120,7 @@ TEST(t1_all_segments_for_the_first_second) {
   CHECK_STR(r.text(), "8888");
   r.run_until(1000);
   CHECK(r.text() != "8888");
-  CHECK(r.timer.hal.logged("hhj-timer 1.1.0 boot 00071ae5 - waiting for START/FINISH on UDP 3004"));
+  CHECK(r.timer.hal.logged("hhj-timer 1.2.0 boot 00071ae5 - showing what the backend says, UDP 3004"));
 }
 
 TEST(t1_selftest_counts_from_power_up_not_from_zero) {
@@ -93,7 +129,7 @@ TEST(t1_selftest_counts_from_power_up_not_from_zero) {
   sim::FakeTimer hal(w, ip(20));
   hal.clock_offset_ms = 500000;
   TimerApp app(hal, sim::TimerUnit::config(1));
-  w.run(999, [&] { app.tick(); });               // begin() runs on the first tick
+  w.run(999, [&] { app.tick(); });                // begin() runs on the first tick
   hhj::Frame f{};
   for (int i = 0; i < 4; i++) f.d[i] = hal.chain[3 - i];
   CHECK_STR(sim::frame_text(sim::wiring(), f), "8888");
@@ -214,120 +250,100 @@ TEST(hello_from_timer_or_backend_is_not_a_gate) {
   CHECK_STR(r.text(), "____");
 }
 
-// ----------------------------------------------------------- T-4 running
-TEST(t4_running_time_counts_from_the_start_edge) {
+// ------------------------------------- T-4 the display never times a run
+TEST(t4_no_backend_gate_events_never_show_a_time) {
+  // The gates and the display are on, the server is still booting. Kids cross
+  // both gates; every crossing arrives as a burst of copies, repeated once a
+  // second because nobody acknowledges it.
   Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);                  // cut right now; arrives 1 ms later
-  r.run_until(2010);
-  CHECK_STR(r.text(), " 000");                    // 9 ms on the clock
-  r.run_until(2011);
-  CHECK_STR(r.text(), " 001");
-  r.run_until(3234);
-  CHECK_STR(r.text(), " 123");
-  r.run_until(14569);
-  CHECK_STR(r.text(), "1256");
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Running);
-  CHECK(r.timer.hal.logged("START #1 (copy 0, age 0 ms) -> clock started"));
+  int wrong = 0;
+  r.run_with_gates(60000, [&] {
+    for (uint32_t i = 0; i < 2; i++) {
+      const int64_t start = 5000 + 15000 * i, finish = start + 7000 + 5500 * i;
+      r.repeat_event(Role::Start, i + 1, start);
+      r.repeat_event(Role::Finish, i + 1, finish);
+    }
+    if (r.w.t > 2002 && r.text() != "----") wrong++;
+  });
+  CHECK_EQ(wrong, 0);                             // the idle picture all along
+  CHECK(!r.timer.app.remote().active(r.w.t));
+  CHECK(r.timer.app.shown(r.w.t).view == TimerApp::View::Idle);
+  CHECK_EQ(r.timer.app.rx_invalid(), 0);          // well-formed: not counted as garbage either
+  CHECK(!r.timer.hal.logged("#"));                // and not logged
+  CHECK_EQ(r.last_hello().st, kStIdle);
+  CHECK_EQ(r.last_hello().ms, 0);
 }
 
-TEST(t7_a_late_start_shows_the_true_running_time_at_once) {
+TEST(t4_backend_idle_or_ready_a_start_event_starts_nothing_until_run) {
   Rig r;
-  r.run_until(7500);
-  r.event(Role::Start, 1, 2000);                  // the beam was cut 5.5 s ago
-  r.run_until(7505);
-  CHECK_STR(r.text(), " 550");
+  int wrong = 0;
+  // no session: the backend says IDLE; a kid crosses START
+  r.run_with_gates(10000, [&] {
+    if (r.w.t % 1000 == 0) r.show(Show::Idle);
+    r.repeat_event(Role::Start, 1, 4000);
+    if (r.w.t > 2002 && r.text() != "----") wrong++;
+  });
+  CHECK_EQ(wrong, 0);
+  // a session is open: READY. The rider crosses START, then FINISH, but the
+  // backend has not said RUN (yet)
+  r.run_with_gates(16000, [&] {
+    if (r.w.t % 1000 == 0) r.show(Show::Ready);
+    r.repeat_event(Role::Start, 2, 13000);
+    r.repeat_event(Role::Finish, 1, 15000);
+    if (r.w.t > 10001 && r.text() != " 000") wrong++;
+  });
+  CHECK_EQ(wrong, 0);
+  CHECK(r.timer.app.shown(r.w.t).view == TimerApp::View::Ready);
+  r.show(Show::Run, 1, 3000);                     // now it does: the START was cut 3 s ago
+  r.run(10);                                      // arrived at 16001: start 13001
+  CHECK_STR(r.text(), " 300");
+  CHECK(r.timer.app.shown(r.w.t).view == TimerApp::View::Running);
+}
+
+TEST(t4_backend_silent_mid_run_idle_after_the_timeout_even_while_gate_events_arrive) {
+  Rig r;
+  auto traffic = [&] {
+    if (r.w.t >= 8000 && r.w.t <= 15000 && r.w.t % 1000 == 0) r.show(Show::Run, 1, static_cast<uint32_t>(r.w.t - 8000));
+    r.repeat_event(Role::Start, 1, 8000);
+    r.repeat_event(Role::Finish, 1, 18000);
+  };
+  r.run_with_gates(15001 + 5000, traffic);        // the last SHOW arrived at 15001: start 8001
+  CHECK_STR(r.text(), "1200");                    // 5000 ms of silence: still the backend's clock
+  r.run_with_gates(15001 + 5001, traffic);
+  CHECK_STR(r.text(), "----");                    // 5001 ms: the idle picture, not a clock of its own
+  CHECK_EQ(r.timer.hal.count_logged("backend silent -> idle picture"), 1);
+  int wrong = 0;
+  r.run_with_gates(60000, [&] {
+    traffic();
+    if (r.text() != "----") wrong++;
+  });
+  CHECK_EQ(wrong, 0);                             // the FINISH (and the retries) changed nothing
+  CHECK_EQ(r.last_hello().st, kStIdle);
+}
+
+TEST(t4_wifi_lost_mid_run_clock_until_the_timeout_then_the_no_wifi_blink) {
+  Rig r;
+  r.run_until(2000);
+  r.show(Show::Run, 1, 0);                        // arrives at 2001: start 2001
+  r.run_until(3000);
+  r.w.ap[0] = false;
+  r.run_until(2001 + 5000);
+  CHECK_STR(r.text(), " 500");
+  r.run_until(2001 + 5001);
+  CHECK_STR(r.text(), "----");                    // 7002 / 500 = 14: the "no WiFi" blink, on phase
+  r.run_until(7600);
+  CHECK_STR(r.text(), "    ");
 }
 
 TEST(t4_long_runs_switch_to_minutes) {
   Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
-  r.run_until(2001 + 99999);
-  CHECK_STR(r.text(), "9999");
-  r.run_until(2001 + 100000);
-  CHECK_STR(r.text(), " 140");
-  r.run_until(2001 + 124999);
-  CHECK_STR(r.text(), " 204");
-  r.run_until(2001 + 125000);
-  CHECK_STR(r.text(), " 205");
-}
-
-TEST(t4_clock_keeps_running_without_wifi) {
-  Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
-  r.run_until(3000);
-  r.w.ap[0] = false;
-  r.run_until(9001);
-  CHECK_STR(r.text(), " 700");
-}
-
-// ----------------------------------------------------------- T-5 result
-TEST(t5_result_blinks_three_seconds_then_stays) {
-  Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
-  r.run_until(14340);
-  r.event(Role::Finish, 1, 14340);                // 12.34 s
-  r.run(5);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Finished);
-  const int64_t shown_at = r.timer.app.stopwatch().finished_at_ms();
-  CHECK_EQ(shown_at, 14341);
-  CHECK(r.timer.hal.logged("FINISH #1 (copy 0, age 0 ms) -> RESULT 12.34 s"));
-  // 300 ms on, 300 ms off, ... for 3 s
-  for (int64_t t = shown_at + 5; t < shown_at + 3000; t++) {
-    r.run_until(t);
-    const bool off = ((t - shown_at) / 300) % 2 == 1;
-    CHECK_STR(r.text(), off ? "    " : "1234");
-  }
-  for (int64_t t = shown_at + 3000; t < shown_at + 9000; t += 7) {
-    r.run_until(t);
-    CHECK_STR(r.text(), "1234");                  // steady
-  }
-  r.run(600000);                                  // ten minutes later: still there (S-9)
-  CHECK_STR(r.text(), "1234");
-}
-
-TEST(t5_next_start_replaces_the_result) {
-  Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
-  r.run_until(9000);
-  r.event(Role::Finish, 1, 9000);
-  r.run_until(20000);
-  CHECK_STR(r.text(), " 700");
-  r.event(Role::Start, 2, 20000);
-  r.run_until(21001);
-  CHECK_STR(r.text(), " 100");
-}
-
-TEST(t7_copies_refine_the_result) {
-  // The first FINISH copy was delayed 80 ms by the network; a later copy was not.
-  Rig r;
-  r.w.net.unicast_min_ms = r.w.net.unicast_max_ms = 1;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 1999);                  // arrives at 2001 with age 1: edge 2000 on the timer's clock
-  r.run_until(12000);
-  r.w.net.unicast_min_ms = r.w.net.unicast_max_ms = 81;
-  r.event(Role::Finish, 1, 11999);                // implies 12080
-  r.w.net.unicast_min_ms = r.w.net.unicast_max_ms = 1;
-  r.run_until(12090);
-  CHECK_EQ(r.timer.app.stopwatch().shown_ms(r.w.t), 10080);
-  r.event(Role::Finish, 1, 11999);                // same event, quick copy: implies 12000
-  r.run_until(12100);
-  CHECK_EQ(r.timer.app.stopwatch().shown_ms(r.w.t), 10000);
-  CHECK_EQ(r.timer.hal.count_logged("RESULT"), 1);              // refinements are not logged as new results
-}
-
-TEST(s7_abandoned_run_goes_back_to_ready) {
-  Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
-  r.run_with_gates(600100 - 2000 + 2000);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);
-  CHECK_STR(r.text(), "----");
-  CHECK_EQ(r.timer.hal.count_logged("no FINISH for 600000 ms -> back to ready"), 1);
+  r.run_with_gates(2001 + 125000, [&] {
+    if (r.w.t % 1000 == 0) r.show(Show::Run, 1, static_cast<uint32_t>(r.w.t));   // START cut at 0: start 1
+    if (r.w.t == 1 + 99999) CHECK_STR(r.text(), "9999");
+    if (r.w.t == 1 + 100000) CHECK_STR(r.text(), " 140");
+    if (r.w.t == 1 + 124999) CHECK_STR(r.text(), " 204");
+    if (r.w.t == 1 + 125000) CHECK_STR(r.text(), " 205");
+  });
 }
 
 // ------------------------------------------------------------- T-6 refresh
@@ -348,7 +364,7 @@ TEST(t6_display_is_written_on_change_and_at_least_every_second) {
 TEST(t6_running_clock_is_written_once_per_hundredth) {
   Rig r;
   r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
+  r.show(Show::Run, 1, 0);
   r.run_until(3000);
   const int before = r.timer.hal.shows;
   r.run(1000);
@@ -405,88 +421,45 @@ TEST(t8_hello_is_broadcast_on_link_up_and_every_two_seconds) {
   decode(hellos[0].data.data(), hellos[0].data.size(), &m);
   CHECK(m.hello.role == Role::Timer);
   CHECK_EQ(m.hello.boot, 0x71AE5u);
-  CHECK_STR(m.hello.fw, "1.1.0");
+  CHECK_STR(m.hello.fw, "1.2.0");
   CHECK_EQ(m.hello.st, kStIdle);
   CHECK_EQ(m.hello.ms, 0);
   CHECK_EQ(m.hello.rssi, -50);
   CHECK_EQ(m.hello.net, 0);
 }
 
-TEST(t8_hello_carries_state_and_time) {
-  Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
-  r.run_until(6100);
-  auto last_hello = [&] {
-    Msg m, out;
-    for (const sim::Datagram& d : r.start_gate.heard) {
-      if (decode(d.data.data(), d.data.size(), &m) && m.kind == Msg::Kind::Hello) out = m;
-    }
-    return out.hello;
-  };
-  CHECK_EQ(last_hello().st, kStRunning);
-  CHECK(last_hello().ms >= 4000 && last_hello().ms <= 4100);    // sent at ~6051: 4.05 s into the run
-  r.event(Role::Finish, 1, 6100);
-  r.run_until(8200);
-  CHECK_EQ(last_hello().st, kStFinished);
-  CHECK_EQ(last_hello().ms, 4100);
-}
-
 // ------------------------------------------------------------- T-9 console
-TEST(t9_console_start_finish_reset) {
-  Rig r;
-  r.run_until(2000);
-  r.timer.hal.type("s");
-  r.run(1);                                       // t = 2001
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Running);
-  CHECK(r.timer.hal.logged("START (console) -> clock started"));
-  r.run_until(4501);
-  r.timer.hal.type("f");
-  r.run(1);                                       // t = 4502
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Finished);
-  CHECK(r.timer.hal.logged("FINISH (console) -> RESULT 2.50 s"));
-  CHECK_STR(r.text(), " 250");
-  r.timer.hal.type("r");
-  r.run(1);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);
-  CHECK(r.timer.hal.logged("reset"));
-  CHECK_STR(r.text(), "____");
-}
-
 TEST(t9_lamp_test_shows_8888_for_two_seconds_without_blocking) {
   Rig r;
   r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
+  r.show(Show::Run, 1, 0);                        // start 2001
   r.run_until(3000);
   r.timer.hal.type("t");
   r.run(1);                                       // key read at t = 3001
   CHECK_STR(r.text(), "8888");
+  CHECK(r.timer.hal.logged("lamp test"));
+  r.run_until(4990);
+  r.show(Show::Result, 2, 0, 2990);               // SHOWs are still handled during the lamp test
   r.run_until(5000);
   CHECK_STR(r.text(), "8888");
-  r.event(Role::Finish, 1, 4990);                 // events are still handled during the lamp test
-  r.run_until(5000);
-  CHECK_STR(r.text(), "8888");
-  r.run_until(5010);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Finished);
+  CHECK(r.timer.app.shown(r.w.t).view == TimerApp::View::Result);
   r.run_until(5100);
-  CHECK_STR(r.text(), " 299");                    // 4991 - 2001
+  CHECK_STR(r.text(), " 299");
 }
 
-TEST(t9_unknown_keys_are_ignored_and_several_keys_work_in_one_go) {
+TEST(t9_only_the_lamp_test_key_does_anything) {
+  // s / f / r used to start, finish and reset a clock of the display's own.
   Rig r;
   r.run_until(2000);
-  r.timer.hal.type("xyz\r\n?S F");
+  const size_t lines = r.timer.hal.logs.size();
+  r.timer.hal.type("sfrSFR xyz\r\n?");
   r.run(5);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);
-  r.timer.hal.type("sr");                         // start and reset within one tick
-  r.run(1);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);
-  r.timer.hal.type("s");
-  r.run(1);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Running);
-  r.timer.hal.type("ssssssssssss");               // more keys than one tick handles: none is lost
-  r.run(3);
   CHECK(r.timer.hal.keys.empty());
+  CHECK_EQ(r.timer.hal.logs.size(), lines);
+  CHECK_STR(r.text(), "____");
+  r.timer.hal.type("st");                         // several keys in one tick: none is lost
+  r.run(1);
+  CHECK_STR(r.text(), "8888");
 }
 
 // ------------------------------------------------------------ T-10 bad input
@@ -500,27 +473,35 @@ TEST(t10_malformed_datagrams_are_counted_and_ignored) {
   r.start_gate.say(ip(20), "{\"ack\":\"START\",\"boot\":1,\"seq\":1}");                     // valid, but not for a timer
   r.run(10);
   CHECK_EQ(r.timer.app.rx_invalid(), 3);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);
   CHECK_STR(r.text(), "____");
+  const long sent = r.timer.hal.sent;
+  r.run(4000);                                    // two HELLO rounds, no gate known: one broadcast each
+  CHECK_EQ(r.timer.hal.sent - sent, 2);
 }
 
-TEST(stale_and_old_events_are_logged_once_and_ignored) {
+// ------------------------------------------------------------ T-7 gate events
+TEST(t7_well_formed_events_are_ignored_whatever_they_say) {
   Rig r;
   r.run_until(2000);
-  r.start_gate.say(ip(20), "{\"time_mark\":\"START\",\"age_ms\":600001,\"boot\":1,\"seq\":9}");
+  const size_t lines = r.timer.hal.logs.size();
+  const char* events[] = {"{\"time_mark\":\"START\",\"age_ms\":0,\"boot\":1,\"seq\":1}",
+                          "{\"time_mark\":\"FINISH\",\"age_ms\":12340,\"boot\":2,\"seq\":1}",
+                          "{\"time_mark\":\"START\",\"age_ms\":600001,\"boot\":1,\"seq\":9}",
+                          "{\"time_mark\":\"FINISH\",\"age_ms\":4294967295,\"boot\":4294967295,\"seq\":4294967295,\"n\":65535}"};
+  for (const char* e : events) {
+    r.start_gate.say(ip(20), e);
+    r.start_gate.say(kBroadcast, e);
+  }
   r.run(10);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);
-  CHECK(r.timer.hal.logged("START #9 (copy 0, age 600001 ms) -> stale, ignored"));
-  r.event(Role::Start, 5, 2010);
+  CHECK_STR(r.text(), "____");
+  CHECK_EQ(r.timer.app.rx_invalid(), 0);
+  CHECK_EQ(r.timer.hal.logs.size(), lines);
+  CHECK(!r.timer.app.remote().active(r.w.t));
+  // nor do they disturb what the backend says
+  r.show(Show::Ready);
+  for (const char* e : events) r.start_gate.say(ip(20), e);
   r.run(10);
-  r.event(Role::Start, 4, 1000);
-  r.run(10);
-  CHECK(r.timer.hal.logged("START #4 (copy 0, age 1020 ms) -> older than what is shown, ignored"));
-  r.run_until(2500);
-  r.event(Role::Finish, 1, 2500);                 // 490 ms after the start: not a finish
-  r.run(10);
-  CHECK(r.timer.hal.logged("-> does not end a run, noted"));
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Running);
+  CHECK_STR(r.text(), " 000");
 }
 
 TEST(event_flood_is_drained) {
@@ -530,8 +511,7 @@ TEST(event_flood_is_drained) {
   for (int i = 0; i < 40; i++) r.event(Role::Start, 1, 2000);
   r.run(20);
   CHECK(r.timer.hal.inbox.empty());
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Running);
-  CHECK_EQ(r.timer.hal.count_logged("clock started"), 1);
+  CHECK_STR(r.text(), "____");
 }
 
 TEST(send_failures_are_counted_not_fatal) {
@@ -596,20 +576,22 @@ TEST(t5_t2_blink_periods_of_zero_mean_no_blinking) {
   TimerAppConfig c = sim::TimerUnit::config(1);
   c.result_blink_half_ms = 0;
   c.idle_blink_half_ms = 0;
-  sim::World w;
-  w.ap[0] = false;
-  sim::TimerUnit t(w, ip(20), c);
-  w.run(1000, [&] { t.tick(); });
+  Rig r(c);
+  r.w.ap[0] = false;
+  r.run_until(1000);
   for (int i = 0; i < 3000; i++) {
-    w.run(1, [&] { t.tick(); });
-    CHECK_STR(t.text(), "----");                  // no WiFi, steady
+    r.run(1);
+    CHECK_STR(r.text(), "----");                  // no WiFi, steady
   }
-  t.hal.type("s");
-  w.run(2500, [&] { t.tick(); });
-  t.hal.type("f");
+  r.w.ap[0] = true;
+  r.backend.join();
+  r.run(25000);
+  CHECK(r.timer.app.uplink().up());
+  r.show(Show::Result, 1, 0, 2500);
   for (int i = 0; i < 4000; i++) {
-    w.run(1, [&] { t.tick(); });
-    CHECK_STR(t.text(), " 250");                  // result, steady from the first moment
+    r.run(1);
+    if (i % 1000 == 999) r.show(Show::Result, 1, 0, 2500);
+    CHECK_STR(r.text(), " 250");                  // result, steady from the first moment
   }
 }
 
@@ -637,109 +619,11 @@ TEST(t8_failed_unicast_hellos_are_counted) {
   CHECK_EQ(r.timer.app.tx_failed(), 2);
 }
 
-// ------------------------------------------------------------- T-11 the log
-TEST(t11_an_ignored_event_is_logged_once_not_once_per_copy) {
-  Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 2, 2000);
-  r.run(10);
-  // START #1 belongs to an earlier run; its gate keeps repeating it every second
-  for (int i = 0; i < 30; i++) {
-    r.event(Role::Start, 1, 500);
-    r.run(1000);
-  }
-  CHECK_EQ(r.timer.hal.count_logged("START #1"), 1);
-  CHECK_EQ(r.timer.hal.count_logged("older than what is shown, ignored"), 1);
-  CHECK_EQ(r.timer.hal.count_logged("clock started"), 1);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Running);
-}
-
-TEST(t11_copies_of_the_current_events_are_silent) {
-  Rig r;
-  r.run_until(2000);
-  for (int i = 0; i < 7; i++) {
-    r.event(Role::Start, 1, 2000);
-    r.run(10);
-  }
-  r.run_until(9000);
-  for (int i = 0; i < 7; i++) {
-    r.event(Role::Finish, 1, 9000);
-    r.run(10);
-  }
-  CHECK_EQ(r.timer.hal.count_logged("START #1"), 1);
-  CHECK_EQ(r.timer.hal.count_logged("FINISH #1"), 1);
-  CHECK_EQ(r.timer.hal.count_logged("RESULT 7.00 s"), 1);
-}
-
-TEST(t11_many_different_ignored_events_each_get_their_line_once) {
-  // Sixteen stale events repeated in rotation (two gates with full outboxes).
-  Rig r;
-  r.run_until(2000);
-  for (int round = 0; round < 5; round++) {
-    for (uint32_t seq = 1; seq <= 16; seq++) {
-      r.start_gate.say(ip(20), "{\"time_mark\":\"START\",\"age_ms\":700000,\"boot\":1,\"seq\":" + std::to_string(seq) + "}");
-      r.run(3);
-    }
-  }
-  CHECK_EQ(r.timer.hal.count_logged("stale, ignored"), 16);
-  // a 17th pushes the oldest out of that memory: both are then reported once more
-  r.start_gate.say(ip(20), "{\"time_mark\":\"START\",\"age_ms\":700000,\"boot\":1,\"seq\":17}");
-  r.start_gate.say(ip(20), "{\"time_mark\":\"START\",\"age_ms\":700000,\"boot\":1,\"seq\":1}");
-  r.start_gate.say(ip(20), "{\"time_mark\":\"START\",\"age_ms\":700000,\"boot\":1,\"seq\":3}");
-  r.run(10);
-  CHECK_EQ(r.timer.hal.count_logged("stale, ignored"), 18);
-  CHECK_EQ(r.timer.hal.count_logged("START #3 "), 1);
-}
-
-TEST(t11_same_number_from_another_gate_or_boot_is_a_different_event) {
-  Rig r;
-  r.run_until(2000);
-  const char* variants[] = {"{\"time_mark\":\"START\",\"age_ms\":700000,\"boot\":1,\"seq\":5}",
-                            "{\"time_mark\":\"FINISH\",\"age_ms\":700000,\"boot\":1,\"seq\":5}",
-                            "{\"time_mark\":\"START\",\"age_ms\":700000,\"boot\":2,\"seq\":5}",
-                            "{\"time_mark\":\"START\",\"age_ms\":700000,\"boot\":1,\"seq\":6}"};
-  for (int round = 0; round < 3; round++) {
-    for (const char* v : variants) r.start_gate.say(ip(20), v);
-    r.run(5);
-  }
-  CHECK_EQ(r.timer.hal.count_logged("stale, ignored"), 4);
-}
-
-TEST(t11_a_late_start_that_completes_a_run_logs_the_result) {
-  Rig r;
-  r.run_until(20000);
-  r.event(Role::Finish, 1, 20000);
-  r.run(10);
-  CHECK(r.timer.hal.logged("FINISH #1 (copy 0, age 0 ms) -> does not end a run, noted"));
-  r.run_until(25000);
-  r.event(Role::Start, 1, 8000);                  // the START gate was offline for 17 s
-  r.run(10);
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Finished);
-  CHECK(r.timer.hal.logged("START #1 (copy 0, age 17000 ms) -> its FINISH was already known: RESULT 12.00 s"));
-  CHECK(!r.timer.hal.logged("clock started"));
-  CHECK_STR(r.text(), "1200");
-}
-
-TEST(t11_restart_is_logged_as_such) {
-  Rig r;
-  r.run_until(2000);
-  r.event(Role::Start, 1, 2000);
-  r.run_until(5000);
-  r.event(Role::Start, 2, 5000);
-  r.run(10);
-  CHECK(r.timer.hal.logged("START #2 (copy 0, age 0 ms) -> clock restarted"));
-  CHECK_EQ(r.timer.hal.count_logged("clock started"), 1);
-  // the longest possible description still fits the log line
-  r.start_gate.say(ip(20), "{\"time_mark\":\"FINISH\",\"age_ms\":4294967295,\"boot\":4294967295,\"seq\":4294967295,\"n\":65535}");
-  r.run(10);
-  CHECK(r.timer.hal.logged("FINISH #4294967295 (copy 65535, age 4294967295 ms) -> stale, ignored"));
-}
-
 // ------------------------------------------------- found by mutation testing
 TEST(default_settings) {
   const TimerAppConfig c;
   CHECK_EQ(c.boot, 0);
-  CHECK_STR(c.fw, "1.1.0");
+  CHECK_STR(c.fw, "1.2.0");
   CHECK(c.chain_first_is_left);
   CHECK_EQ(c.hello_ms, 2000);
   CHECK_EQ(c.peer_ttl_ms, 7000);
@@ -858,77 +742,35 @@ TEST(t5_blinking_stops_exactly_at_the_end_of_the_blink_time) {
   // 900 ms of blinking in 300 ms halves: on, off, on - and at 900 ms it would be "off" if it went on.
   TimerAppConfig c = sim::TimerUnit::config(1);
   c.result_blink_ms = 900;
-  sim::World w;
-  sim::TimerUnit t(w, ip(20), c);
-  w.run(1500, [&] { t.tick(); });
-  t.hal.type("s");
-  w.run(2000, [&] { t.tick(); });                 // started at 1501
-  t.hal.type("f");
-  w.run(1, [&] { t.tick(); });                    // finished at 3501: result 2.00 s
+  Rig r(c);
+  r.run_until(3500);
+  r.show(Show::Result, 1, 0, 2000);
+  r.run(1);                                       // arrived at 3501: result 2.00 s
   const int64_t shown_at = 3501;
   const char* want[] = {" 200", "    ", " 200", " 200", " 200"};   // 0-299, 300-599, 600-899, 900-1199, ...
   for (int64_t since = 0; since < 1500; since++) {
-    CHECK_STR(t.text(), want[since / 300]);
-    w.run(1, [&] { t.tick(); });
+    CHECK_STR(r.text(), want[since / 300]);
+    r.run(1);
   }
-  CHECK_EQ(t.app.stopwatch().finished_at_ms(), shown_at);
+  CHECK_EQ(r.timer.app.remote().result_since_ms(), shown_at);
 }
 
 TEST(t9_a_nul_byte_on_the_console_is_just_an_unknown_key) {
   Rig r;
   r.run_until(1500);
   r.timer.hal.keys.push_back(0);
-  r.timer.hal.keys.push_back('s');
+  r.timer.hal.keys.push_back('t');
   r.run(1);                                       // both are read in the same tick
   CHECK(r.timer.hal.keys.empty());
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Running);
-}
-
-TEST(t11_result_log_shows_seconds_and_hundredths) {
-  Rig r;
-  r.run_until(1500);
-  r.timer.hal.type("s");
-  r.run(1);                                       // started at 1501
-  r.run_until(1501 + 2996);
-  r.timer.hal.type("f");
-  r.run(1);                                       // finished at 1501 + 2997
-  CHECK(r.timer.hal.logged("FINISH (console) -> RESULT 2.99 s"));
-  r.timer.hal.type("s");
-  r.run(1);
-  r.run(61049);
-  r.timer.hal.type("f");
-  r.run(1);                                       // 61.050 s
-  CHECK(r.timer.hal.logged("FINISH (console) -> RESULT 61.05 s"));
+  CHECK_STR(r.text(), "8888");
 }
 
 // ------------------------------------------------ T-12 the backend's display
-namespace {
-
-// A pretend backend at 192.168.10.30 that tells the timer what to show.
-struct Director {
-  Rig& r;
-  sim::Probe node;
-  explicit Director(Rig& rig) : r(rig), node(rig.w, ip(30)) { node.join(); }
-  void say(Show state, uint32_t rev = 0, uint32_t age_ms = 0, uint32_t ms = 0) {
-    ShowMsg s;
-    s.state = state;
-    s.rev = rev;
-    s.age_ms = age_ms;
-    s.ms = ms;
-    char buf[120];
-    const size_t n = encode(s, buf, sizeof(buf));
-    node.say(ip(20), std::string(buf, n));
-  }
-};
-
-}  // namespace
-
 TEST(t12_backend_takes_the_display_over_and_hands_it_back) {
   Rig r;
-  Director d(r);
   r.run_until(2000);
   CHECK(!r.timer.app.remote().active(r.w.t));
-  d.say(Show::Ready);
+  r.show(Show::Ready);
   r.run(2);                                       // arrives at 2001
   CHECK(r.timer.app.remote().active(r.w.t));
   CHECK_STR(r.text(), " 000");                    // 0.00: a rider is about to start
@@ -936,9 +778,9 @@ TEST(t12_backend_takes_the_display_over_and_hands_it_back) {
   r.run_until(2001 + 5000);
   CHECK_STR(r.text(), " 000");                    // 5000 ms after the last SHOW: still the backend's
   r.run(1);
-  CHECK_STR(r.text(), "____");                    // 5001 ms: back to the own (idle) picture
-  CHECK_EQ(r.timer.hal.count_logged("backend silent -> showing the own stopwatch"), 1);
-  d.say(Show::Ready);
+  CHECK_STR(r.text(), "____");                    // 5001 ms: back to the idle picture
+  CHECK_EQ(r.timer.hal.count_logged("backend silent -> idle picture"), 1);
+  r.show(Show::Ready);
   r.run(2);
   CHECK_EQ(r.timer.hal.count_logged("backend took over the display"), 2);
 }
@@ -946,13 +788,12 @@ TEST(t12_backend_takes_the_display_over_and_hands_it_back) {
 TEST(t12_gate_crossings_are_not_shown_while_the_backend_decides) {
   // Kids run through the gates between sessions: the display must not start counting.
   Rig r;
-  Director d(r);
   r.run_until(2000);
   r.hello(Role::Start);
   r.hello(Role::Finish);
   for (int64_t t = 2000; t < 12000; t += 1000) {
     r.run_until(t);
-    d.say(Show::Idle);
+    r.show(Show::Idle);
     if (t == 4000) r.event(Role::Start, 1, 4000);
     if (t == 7000) r.event(Role::Finish, 1, 7000);
     if (t % 2000 == 0) {
@@ -962,69 +803,62 @@ TEST(t12_gate_crossings_are_not_shown_while_the_backend_decides) {
     r.run(500);
     CHECK_STR(r.text(), "----");                  // the idle picture throughout
   }
-  // ...but the own stopwatch did follow them, ready to take over
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Finished);
   r.run_until(11000 + 5010);
-  CHECK_STR(r.text(), " 300");                    // backend silent: the own result (7001 - 4001) shows
+  CHECK_STR(r.text(), "----");                    // backend silent: still nothing of the display's own
 }
 
 TEST(t12_running_clock_from_the_backend) {
   Rig r;
-  Director d(r);
   r.run_until(10000);
-  d.say(Show::Run, 77, 4000);                     // the counting START was cut 4 s ago; arrives at 10001
+  r.show(Show::Run, 77, 4000);                    // the counting START was cut 4 s ago; arrives at 10001
   r.run(2);
   CHECK_STR(r.text(), " 400");
   for (int64_t t = 11000; t <= 18000; t += 1000) {          // the backend repeats it every second
     r.run_until(t);
-    d.say(Show::Run, 77, static_cast<uint32_t>(t - 6000));
+    r.show(Show::Run, 77, static_cast<uint32_t>(t - 6000));
   }
   r.run_until(6001 + 12340);
   CHECK_STR(r.text(), "1234");                    // 12.34 s after the START as the timer placed it (6001)
-  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);   // the own stopwatch saw no gate event
 }
 
 TEST(t12_copies_refine_the_backend_clock) {
   Rig r;
-  Director d(r);
   r.run_until(10000);
   r.w.net.unicast_min_ms = r.w.net.unicast_max_ms = 41;     // the first copy is 41 ms late
-  d.say(Show::Run, 5, 1000);                      // true start: 9000
+  r.show(Show::Run, 5, 1000);                     // true start: 9000
   r.w.net.unicast_min_ms = r.w.net.unicast_max_ms = 1;
   r.run_until(10100);
   CHECK_EQ(r.timer.app.remote().shown_ms(10100), 1059);     // start estimated 9041
-  d.say(Show::Run, 5, 1100);                      // 1 ms on the wire: start 9001
+  r.show(Show::Run, 5, 1100);                     // 1 ms on the wire: start 9001
   r.run_until(10200);
   CHECK_EQ(r.timer.app.remote().shown_ms(10200), 1199);
 }
 
 TEST(t12_operator_picks_another_start_and_the_clock_jumps) {
   Rig r;
-  Director d(r);
   r.run_until(10000);
-  d.say(Show::Run, 1, 6000);                      // first START counts: 6 s on the clock
+  r.show(Show::Run, 1, 6000);                     // first START counts: 6 s on the clock
   r.run(2);
   CHECK_STR(r.text(), " 600");
-  d.say(Show::Run, 2, 2000);                      // the operator picked a later START: 2 s
+  r.show(Show::Run, 2, 2000);                     // the operator picked a later START: 2 s
   r.run(2);
   CHECK_STR(r.text(), " 200");
 }
 
 TEST(t12_result_from_the_backend_blinks_then_stays) {
   Rig r;
-  Director d(r);
   r.run_until(10000);
-  d.say(Show::Result, 9, 0, 23450);               // arrives at 10001
+  r.show(Show::Result, 9, 0, 23450);              // arrives at 10001
   for (int64_t since = 1; since < 3000; since++) {
     r.run_until(10001 + since);
     const bool off = (since / 300) % 2 == 1;
     CHECK_STR(r.text(), off ? "    " : "2345");
-    if (since % 1000 == 0) d.say(Show::Result, 9, 0, 23450);   // the 1 Hz repeats do not restart the blinking
+    if (since % 1000 == 0) r.show(Show::Result, 9, 0, 23450);   // the 1 Hz repeats do not restart the blinking
   }
   r.run_until(10001 + 3000);
   CHECK_STR(r.text(), "2345");
   // the operator picks another FINISH: new result, blinking again
-  d.say(Show::Result, 10, 0, 21000);
+  r.show(Show::Result, 10, 0, 21000);
   r.run_until(13002 + 299);
   CHECK_STR(r.text(), "2100");
   r.run_until(13002 + 300);
@@ -1033,9 +867,8 @@ TEST(t12_result_from_the_backend_blinks_then_stays) {
 
 TEST(t12_idle_from_the_backend_shows_gate_status_and_no_wifi_still_blinks) {
   Rig r;
-  Director d(r);
   r.run_until(2000);
-  d.say(Show::Idle);
+  r.show(Show::Idle);
   r.hello(Role::Start);
   r.run(5);
   CHECK_STR(r.text(), "--__");
@@ -1047,33 +880,38 @@ TEST(t12_idle_from_the_backend_shows_gate_status_and_no_wifi_still_blinks) {
   CHECK_STR(r.text(), "----");
 }
 
-TEST(t12_hello_reports_what_is_shown) {
+TEST(t8_hello_reports_what_the_backend_says_and_nothing_else) {
   Rig r;
-  Director d(r);
-  auto last_hello = [&] {
-    Msg m, out;
-    for (const sim::Datagram& dg : r.start_gate.heard) {
-      if (decode(dg.data.data(), dg.data.size(), &m) && m.kind == Msg::Kind::Hello) out = m;
-    }
-    return out.hello;
-  };
+  r.run_with_gates(3900, [&] { r.repeat_event(Role::Start, 1, 1500); });
+  CHECK_EQ(r.last_hello().st, kStIdle);           // HELLO at 2051, after a START: still idle
+  CHECK_EQ(r.last_hello().ms, 0);
   r.run_until(3900);
-  d.say(Show::Run, 1, 1000);                      // arrives 3901: start 2901
+  r.show(Show::Run, 1, 1000);                     // arrives 3901: start 2901
   r.run_until(4100);                              // HELLO at 4051
-  CHECK_EQ(last_hello().st, kStRunning);
-  CHECK_EQ(last_hello().ms, 1150);
-  d.say(Show::Result, 2, 0, 9870);
+  CHECK_EQ(r.last_hello().st, kStRunning);
+  CHECK_EQ(r.last_hello().ms, 1150);
+  r.show(Show::Result, 2, 0, 9870);
   r.run_until(6100);
-  CHECK_EQ(last_hello().st, kStFinished);
-  CHECK_EQ(last_hello().ms, 9870);
-  d.say(Show::Ready);
+  CHECK_EQ(r.last_hello().st, kStFinished);
+  CHECK_EQ(r.last_hello().ms, 9870);
+  r.show(Show::Ready);
   r.run_until(8100);
-  CHECK_EQ(last_hello().st, kStIdle);
-  CHECK_EQ(last_hello().ms, 0);
-  d.say(Show::Idle, 3, 500, 600);                 // idle: whatever else the datagram carries
+  CHECK_EQ(r.last_hello().st, kStIdle);
+  CHECK_EQ(r.last_hello().ms, 0);
+  r.show(Show::Idle, 3, 500, 600);                // idle: whatever else the datagram carries
   r.run_until(10100);
-  CHECK_EQ(last_hello().st, kStIdle);
-  CHECK_EQ(last_hello().ms, 0);
+  CHECK_EQ(r.last_hello().st, kStIdle);
+  CHECK_EQ(r.last_hello().ms, 0);
+  r.show(Show::Result, 4, 0, 5550);
+  r.run_until(12100);
+  CHECK_EQ(r.last_hello().st, kStFinished);
+  // the backend falls silent; the gates keep reporting crossings
+  r.run_with_gates(20100, [&] {
+    r.repeat_event(Role::Start, 2, 13000);
+    r.repeat_event(Role::Finish, 2, 15000);
+  });
+  CHECK_EQ(r.last_hello().st, kStIdle);           // HELLO at 20051, 10 s after the last SHOW
+  CHECK_EQ(r.last_hello().ms, 0);
 }
 
 TEST(t12_default_remote_timeout) {

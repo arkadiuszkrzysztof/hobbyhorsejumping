@@ -1,4 +1,4 @@
-import type { ArenaState, CompetitionSummary } from './types'
+import type { ArenaState, CompetitionSummary, Outcome, Rules } from './types'
 
 /** status 0 = the request never got an answer (network down, server gone). */
 export class ApiError extends Error {
@@ -49,10 +49,9 @@ export function createApi(fetchFn: FetchFn) {
 
     return {
         listCompetitions: () => request<CompetitionSummary[]>('GET', '/api/competitions/'),
-        createCompetition: (name: string, fence_count: number) =>
-            state('POST', '/api/competitions/', { name, fence_count }),
+        createCompetition: (body: CompetitionBody) => state('POST', '/api/competitions/', body),
         getState: (cid: string) => state('GET', `/api/competitions/${cid}/state/`),
-        updateCompetition: (cid: string, patch: { name?: string; fence_count?: number }) =>
+        updateCompetition: (cid: string, patch: Partial<CompetitionBody>) =>
             state('PATCH', `/api/competitions/${cid}/`, patch),
         addEntry: (cid: string, name: string, horse = '') =>
             state('POST', `/api/competitions/${cid}/entries/`, horse ? { name, horse } : { name }),
@@ -65,12 +64,26 @@ export function createApi(fetchFn: FetchFn) {
         capture: (cid: string, on: boolean) =>
             state('POST', `/api/competitions/${cid}/capture/`, { on }),
         penalty: (rid: string, fence: string) => state('POST', `/api/runs/${rid}/penalty/`, { fence }),
+        refusal: (rid: string, fence: string) => state('POST', `/api/runs/${rid}/refusal/`, { fence }),
         pick: (rid: string, body: PickBody) => state('POST', `/api/runs/${rid}/pick/`, body),
-        save: (rid: string) => state('POST', `/api/runs/${rid}/save/`),
+        /** Without `end` the round was completed; with it, it was retired from or eliminated. */
+        save: (rid: string, end?: RoundEnd) => state('POST', `/api/runs/${rid}/save/`, end),
         discard: (rid: string) => state('POST', `/api/runs/${rid}/discard/`),
         reopen: (rid: string) => state('POST', `/api/runs/${rid}/reopen/`),
         deleteRun: (rid: string) => state('DELETE', `/api/runs/${rid}/`),
     }
+}
+
+/** A competition as the form sends it. */
+export interface CompetitionBody extends Rules {
+    name: string
+    fence_count: number
+}
+
+export interface RoundEnd {
+    outcome: Exclude<Outcome, 'FINISHED'>
+    /** Where it ended, if known. */
+    fence?: string
 }
 
 /** What can be corrected on a competitor: at least one of the two. `horse: ''` removes the horse. */

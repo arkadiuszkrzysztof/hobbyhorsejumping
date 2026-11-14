@@ -68,7 +68,7 @@ def competitions(request):
     try:
         with transaction.atomic():
             data = _body(request)
-            created = arena.create_competition(data.get('name'), data.get('fence_count', 12))
+            created = arena.create_competition(data.get('name'), data.get('fence_count', 12), **_rules(data))
             arena.notify(created.pk)
     except arena.ArenaError as exc:
         return Response({'error': str(exc)}, status=exc.status)
@@ -84,7 +84,7 @@ def state(request, cid):
 def competition(request, cid):
     c = _competition(cid)
     data = _body(request)
-    arena.update_competition(c, data.get('name', arena.KEEP), data.get('fence_count', arena.KEEP))
+    arena.update_competition(c, data.get('name', arena.KEEP), data.get('fence_count', arena.KEEP), **_rules(data))
     return c
 
 
@@ -154,6 +154,13 @@ def penalty(request, rid):
 
 
 @console_view(['POST'])
+def refusal(request, rid):
+    run = _run(rid)
+    arena.cycle_refusal(run, _body(request).get('fence'))
+    return run.entry.competition
+
+
+@console_view(['POST'])
 def pick(request, rid):
     run = _run(rid)
     data = _body(request)
@@ -164,7 +171,8 @@ def pick(request, rid):
 @console_view(['POST'])
 def save(request, rid):
     run = _run(rid)
-    arena.save_run(run)
+    data = _body(request)
+    arena.save_run(run, data.get('outcome', 'FINISHED'), data.get('fence'))
     return run.entry.competition
 
 
@@ -189,6 +197,10 @@ def run(request, rid):
     c = r.entry.competition
     arena.delete_run(r)
     return c
+
+
+def _rules(data):
+    return {key: data[key] for key in arena.RULES if key in data}
 
 
 def _uuid(value):

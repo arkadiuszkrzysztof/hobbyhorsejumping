@@ -17,6 +17,7 @@ urlpatterns = [
     path('api/entries/<uuid:eid>/', api.entry),
     path('api/runs/<uuid:rid>/', api.run),
     path('api/runs/<uuid:rid>/penalty/', api.penalty),
+    path('api/runs/<uuid:rid>/refusal/', api.refusal),
     path('api/runs/<uuid:rid>/pick/', api.pick),
     path('api/runs/<uuid:rid>/save/', api.save),
     path('api/runs/<uuid:rid>/discard/', api.discard),

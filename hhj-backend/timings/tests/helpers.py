@@ -58,3 +58,13 @@ class Client:
 
 def event(mark='START', boot=1, seq=1, age_ms=0, **kw):
     return link.Event(mark=mark, age_ms=age_ms, boot=boot, seq=seq, **kw)
+
+
+# The scoring rules a competition gets when none are given (API.md).
+USUAL_RULES = {'time_allowed': None, 'knockdown_points': 4.0, 'refusal_points': 4.0, 'overtime_points': 0.4}
+
+
+def run_row(points=0.0, time_points=0.0, **fields):
+    """A run as the state lists it: `fields` plus the defaults of everything else."""
+    return {'refusals': {}, 'outcome': 'FINISHED', 'outcome_fence': '',
+            'fence_points': points - time_points, 'time_points': time_points, 'points': points, **fields}

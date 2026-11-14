@@ -10,7 +10,7 @@ class ParticipantAdmin(admin.ModelAdmin):
 
 @admin.register(Competition)
 class CompetitionAdmin(admin.ModelAdmin):
-  list_display = ['name', 'start_date_time', 'fence_count', 'number_of_starts']
+  list_display = ['name', 'start_date_time', 'fence_count', 'time_allowed', 'number_of_starts']
   search_fields = ['name']
 
 

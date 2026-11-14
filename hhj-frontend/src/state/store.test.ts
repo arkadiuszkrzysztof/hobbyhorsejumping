@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CID, FakeApi, apiWith, makeDeps, makeState, session, summary } from '../test/fakes'
+import { CID, FakeApi, RULES, apiWith, makeDeps, makeState, session, summary } from '../test/fakes'
 import { BELL_KEY, CompetitionStore, ORDER_KEY, STORAGE_KEY, reconnectDelay, startedRegistering } from './store'
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
@@ -26,7 +26,7 @@ describe('CompetitionStore', () => {
     })
 
     it('reopens the remembered competition, falling back to the newest', async () => {
-        const other = makeState({ competition: { id: 'c2', name: 'Sunday', fence_count: 18 } })
+        const other = makeState({ competition: { id: 'c2', name: 'Sunday', fence_count: 18, ...RULES } })
         const api = apiWith(makeState(), [summary(), summary('c2', 'Sunday')]).on(
             'GET',
             '/api/competitions/c2/state/',
@@ -64,7 +64,7 @@ describe('CompetitionStore', () => {
         const { store, deps } = await started(apiWith(makeState({ server_time: 1000 })))
         deps.sockets[0]!.send({
             type: 'state',
-            state: makeState({ server_time: 5000, competition: { id: 'zz', name: 'x', fence_count: 1 } }),
+            state: makeState({ server_time: 5000, competition: { id: 'zz', name: 'x', fence_count: 1, ...RULES } }),
         })
         expect(store.getSnapshot().state?.competition.id).toBe(CID)
     })
@@ -265,7 +265,7 @@ describe('start bell', () => {
         ws.send({ type: 'state', state: registering(50) })
         ws.send({
             type: 'state',
-            state: { ...registering(200), competition: { id: 'zz', name: 'x', fence_count: 1 } },
+            state: { ...registering(200), competition: { id: 'zz', name: 'x', fence_count: 1, ...RULES } },
         })
         expect(deps.bell.rings).toBe(0)
     })

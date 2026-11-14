@@ -17,9 +17,17 @@ anything changes. No authentication: the system lives on its own WiFi.
 - Of the session's signals one START and one FINISH count. By default the
   **first START** and the **last FINISH after it**; the operator can pick others.
   `time = FINISH - START`.
-- **Penalties** are fence labels (`"7"`, `"9B"`), toggled with one click.
-- **Saving** freezes the run (time, penalties, the two signals), closes the
-  session and selects the next entry in the list.
+- Faults are marked per fence with one click: a **knockdown** on a fence or one
+  of its elements (`"7"`, `"9B"`), and **refusals** on a fence (up to two).
+- **Penalty points** follow the competition's rules: so many per knockdown and
+  per refusal (4 and 4 unless changed), and so many (0.4) for every *full*
+  second over the **time allowed**, if the competition has one — 0.99 s over
+  costs nothing. The state carries the points; changing the rules rescores
+  every run.
+- **Saving** freezes the run (time, faults, the two signals), closes the
+  session and selects the next entry in the list. A round that was not
+  completed is saved as **retired** or **eliminated** instead: it keeps its
+  faults, has no time, and may say at which fence it ended.
 - The external display follows the session: 0.00 when it is open and nothing
   has started, the running clock from the counting START, the result once a
   FINISH counts. Picking another START / FINISH changes the display too.
@@ -32,17 +40,28 @@ of one competition, and the WebSocket pushes the same object.
 ```jsonc
 {
   "server_time": 1794000000000,          // epoch ms on the server when this was produced
-  "competition": { "id": "…", "name": "Saturday open", "fence_count": 12 },
+  "competition": { "id": "…", "name": "Saturday open", "fence_count": 12,
+                   "time_allowed": 45,                 // seconds; null = no time penalties
+                   "knockdown_points": 4.0, "refusal_points": 4.0,
+                   "overtime_points": 0.4 },           // per full second over the time allowed
   "entries": [                           // in list order
     { "id": "…", "name": "Zosia", "horse": "Stormy",   // horse: "" when none was given
-      "runs": [ { "id": "…", "number": 1, "status": "SAVED", "time_ms": 23450, "penalties": ["7", "9B"] },
-                { "id": "…", "number": 2, "status": "OPEN",  "time_ms": null,  "penalties": [] } ] }
+      "runs": [ { "id": "…", "number": 1, "status": "SAVED", "time_ms": 49450,
+                  "penalties": ["7", "9B"],            // knocked down
+                  "refusals": { "5": 1 },              // refusals per fence number
+                  "outcome": "FINISHED",               // or "RETIRED" / "ELIMINATED" (then time_ms is null)
+                  "outcome_fence": "",                 // where a retired / eliminated round ended, if said
+                  "fence_points": 12.0, "time_points": 1.6, "points": 13.6 },
+                { "id": "…", "number": 2, "status": "OPEN", "time_ms": null, "penalties": [], "refusals": {},
+                  "outcome": "FINISHED", "outcome_fence": "",
+                  "fence_points": 0.0, "time_points": 0.0, "points": 0.0 } ] }
   ],
   "selected_entry": "…",                 // entry id or null
   "session": {                           // the open run of THIS competition, or null
     "run_id": "…", "entry_id": "…", "number": 2,
     "capturing": true,
-    "penalties": ["7"],
+    "penalties": ["7"], "refusals": {},
+    "fence_points": 4.0, "time_points": 0.0, "points": 4.0,   // as it stands now
     "starts":   [ { "id": "…", "sensor_time": 1794000001000, "in_session": true } ],
     "finishes": [ { "id": "…", "sensor_time": 1794000024450, "in_session": true, "time_ms": 23450 } ],
     "start_id": "…", "finish_id": "…",   // the two that count (null = none)
@@ -76,24 +95,25 @@ possible right now), each with `{"error": "human readable"}`.
 
 | Method & path | Body | Does |
 |---|---|---|
-| `GET /api/competitions/` | | list, newest first: `[{id, name, fence_count, entries, runs}]` |
-| `POST /api/competitions/` | `{name, fence_count?}` | create (fence_count 1–24, default 12) → state, `201` |
+| `GET /api/competitions/` | | list, newest first: the `competition` object of the state plus `entries` and `runs` (counts) |
+| `POST /api/competitions/` | `{name, fence_count?, time_allowed?, knockdown_points?, refusal_points?, overtime_points?}` | create → state, `201`. fence_count 1–24 (default 12); time_allowed whole seconds 1–999 or `null` (default); the three point values 0–99.99 with at most two decimals (default 4 / 4 / 0.4) |
 | `GET /api/competitions/<cid>/state/` | | state |
-| `PATCH /api/competitions/<cid>/` | `{name?, fence_count?}` | rename / change fence count → state |
+| `PATCH /api/competitions/<cid>/` | any of the fields above | change what is given → state |
 | `POST /api/competitions/<cid>/entries/` | `{name, horse?}` | add a competitor at the end of the list; `horse` is the optional name of their hobby horse → state |
 | `PATCH /api/entries/<eid>/` | `{name?, horse?}` | rename the competitor and / or the horse (`horse: ""` or `null` removes it); at least one of the two → state |
 | `DELETE /api/entries/<eid>/` | | remove from the list **with its saved runs** → state. `409` while its session is open |
 | `POST /api/competitions/<cid>/order/` | `{entries: [eid, …]}` | new order; must list every entry exactly once → state |
 | `POST /api/competitions/<cid>/select/` | `{entry: eid \| null, move?: bool}` | select. `409` if a session is open for another entry, unless `move: true`, which hands the open session over to the selected entry → state |
 | `POST /api/competitions/<cid>/capture/` | `{on: bool}` | start / stop registering for the selected entry. `on: true` opens a session if none is open. `409` without a selection, or while a session is open in another competition → state |
-| `POST /api/runs/<rid>/penalty/` | `{fence}` | toggle the penalty on that fence (`"1"`…`"24"`, optionally with `A`/`B`/`C`) → state |
+| `POST /api/runs/<rid>/penalty/` | `{fence}` | toggle the knockdown on that fence (`"1"`…`"24"`, optionally with `A`/`B`/`C`) → state |
+| `POST /api/runs/<rid>/refusal/` | `{fence}` | one more refusal at that fence (number only); after two, the next one clears them → state |
 | `POST /api/runs/<rid>/pick/` | `{start?: id \| null, finish?: id \| null}` | make that signal count; `null` = back to the automatic choice → state |
-| `POST /api/runs/<rid>/save/` | | freeze the run, close the session, select the next entry → state |
+| `POST /api/runs/<rid>/save/` | `{outcome?, fence?}` | freeze the run, close the session, select the next entry → state. `outcome`: `"FINISHED"` (default), `"RETIRED"` or `"ELIMINATED"`; with the last two `fence` may say where the round ended |
 | `POST /api/runs/<rid>/discard/` | | throw the open session away (its signals stay stored, unattached) → state |
 | `POST /api/runs/<rid>/reopen/` | | make a saved run the session again (not capturing) to correct it. `409` while another session is open → state |
 | `DELETE /api/runs/<rid>/` | | delete a saved run → state |
 
-`penalty`, `pick`, `save`, `discard` need the run to be the open session (`409` otherwise).
+`penalty`, `refusal`, `pick`, `save`, `discard` need the run to be the open session (`409` otherwise).
 
 ## WebSocket
 

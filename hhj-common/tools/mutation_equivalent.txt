@@ -51,20 +51,6 @@ hhj-timer/include/display.h @@ if (ms < 0) ms = 0;                              
 hhj-timer/include/display.h @@ if (total > 99 * 60 + 59) total = 99 * 60 + 59; @@ if (total >= 99 * 60 + 59) total = 99 * 60 + 59; @@ (identity) 99:59 is set to 99:59
 hhj-timer/include/display.h @@ if (total > 99 * 60 + 59) total = 99 * 60 + 59; @@ if (total > 99 * 60 + 58) total = 99 * 60 + 59; @@ (identity) the only additional value affected is 99:59, which is set to 99:59
 
-# ---- stopwatch.h
-hhj-timer/include/stopwatch.h @@ if (now_ms > floor_) floor_ = now_ms; @@ if (now_ms >= floor_) floor_ = now_ms; @@ (identity) for equal values the assignment changes nothing
-hhj-timer/include/stopwatch.h @@ return ms < 0 ? 0 : ms; @@ return ms <= 0 ? 0 : ms; @@ (identity) 0 is returned as 0 either way
-hhj-timer/include/stopwatch.h @@ return ms < 0 ? 0 : ms; @@ return ms < 1 ? 0 : ms; @@ (identity) 0 is returned as 0 either way
-hhj-timer/include/stopwatch.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 1, seq = 0; @@ (init) a default Key is the operator's key (gate == false); its boot and seq are never compared
-hhj-timer/include/stopwatch.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 0, seq = 1; @@ (init) a default Key is the operator's key (gate == false); its boot and seq are never compared
-hhj-timer/include/stopwatch.h @@ int64_t edge = 0; @@ int64_t edge = 1; @@ (init) an unused slot's edge is never read: every use is guarded by `used`
-hhj-timer/include/stopwatch.h @@ if (key.seq < last_start_.seq) return Outcome::Old;                      // S-6 @@ if (key.seq <= last_start_.seq) return Outcome::Old;                      // S-6 @@ (identity) the equal case has already returned in the branch just above
-hhj-timer/include/stopwatch.h @@ if (slot == kNone || fins_[i].edge < fins_[slot].edge) slot = i; @@ if (slot == kNone || fins_[i].edge <= fins_[slot].edge) slot = i; @@ (unique) only differs for two remembered FINISHes with exactly the same edge: whichever of the two makes room, every result stays the same
-hhj-timer/include/stopwatch.h @@ if (best == kNone || fins_[i].edge < fins_[best].edge) best = i; @@ if (best == kNone || fins_[i].edge <= fins_[best].edge) best = i; @@ (unique) only differs for two FINISHes with exactly the same edge: whichever of the two is chosen, the result is the same
-hhj-timer/include/stopwatch.h @@ bool run_by_gate_ = false;      // ... and it is last_start_ (not an operator start) @@ bool run_by_gate_ = true;      // ... and it is last_start_ (not an operator start) @@ (init) only read while run_ is true, and every START sets it together with run_
-hhj-timer/include/stopwatch.h @@ int64_t t_start_ = 0; @@ int64_t t_start_ = 1; @@ (init) only read while run_ is true, after a START has set it
-hhj-timer/include/stopwatch.h @@ int64_t t_shown_ = 0; @@ int64_t t_shown_ = 1; @@ (init) only meaningful in the Finished state, after choose() has set it
-
 # ---- link.h
 hhj-common/include/hhj/link.h @@ const size_t n = strnlen(fw, kFwMax + 1); @@ const size_t n = strnlen(fw, kFwMax + 2); @@ the limit only has to be larger than kFwMax; every fw string is NUL-terminated within kFwMax + 1 bytes
 hhj-common/include/hhj/link.h @@ int64_t v = 0; @@ int64_t v = 1; @@ (init) get_int() assigns it on success, and on failure the function returns before using it
@@ -104,15 +90,9 @@ hhj-timer/include/timer_app.h @@ bool have = false; @@ bool have = true; @@ (ini
 hhj-timer/include/timer_app.h @@ int64_t seen_ms = 0; @@ int64_t seen_ms = 1; @@ (init) only read while have is true, after a HELLO has set it
 hhj-timer/include/timer_app.h @@ uint32_t st = 0; @@ uint32_t st = 1; @@ (init) only read while have is true, after a HELLO has set it
 hhj-timer/include/timer_app.h @@ uint32_t from = 0; @@ uint32_t from = 1; @@ (init) the HAL fills it in for every datagram it returns
-hhj-timer/include/timer_app.h @@ const bool news = o == Stopwatch::Outcome::Started || o == Stopwatch::Outcome::Restarted || @@ const bool news = o == Stopwatch::Outcome::Started && o == Stopwatch::Outcome::Restarted || @@ a START that starts the clock is always the first copy of its event to be reported, so it is logged through first_time_reported() just the same
-hhj-timer/include/timer_app.h @@ seen_next_ = (seen_next_ + 1) % kSeen; @@ seen_next_ = (seen_next_ - 1) % kSeen; @@ (unique) the ring is walked in the other direction; it still overwrites its oldest entry
 hhj-timer/include/timer_app.h @@ int64_t t_boot_ = 0; @@ int64_t t_boot_ = 1; @@ (init) begin() sets it
 hhj-timer/include/timer_app.h @@ int64_t lamp_until_ = 0; @@ int64_t lamp_until_ = 1; @@ only differs at clock value 0, the first instant of the power-up self-test, which shows the same 8888
 hhj-timer/include/timer_app.h @@ int64_t next_hello_ms_ = 0; @@ int64_t next_hello_ms_ = 1; @@ (init) set when the link comes up, which is before a HELLO can be due
-hhj-timer/include/timer_app.h @@ bool used = false; @@ bool used = true; @@ (init) an unset entry has mark None, which no event carries, so it never matches
-hhj-timer/include/timer_app.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 1, seq = 0; @@ (init) an unset entry has mark None, which no event carries, so it never matches
-hhj-timer/include/timer_app.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 0, seq = 1; @@ (init) an unset entry has mark None, which no event carries, so it never matches
-hhj-timer/include/timer_app.h @@ size_t seen_next_ = 0; @@ size_t seen_next_ = 1; @@ (init) it does not matter at which slot the ring starts
 hhj-timer/include/timer_app.h @@ int64_t t_shown_ = 0; @@ int64_t t_shown_ = 1; @@ (init) only read when shown_valid_ is true, after the first frame has set it
 
 # ---- remote.h

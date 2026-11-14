@@ -48,7 +48,7 @@ function Screen() {
                     <CompetitionForm
                         submitLabel="Create competition"
                         busy={snap.pending.has('competition:create')}
-                        onSubmit={(name, fences) => void store.createCompetition(name, fences)}
+                        onSubmit={(competition) => void store.createCompetition(competition)}
                     />
                 </div>
             </div>

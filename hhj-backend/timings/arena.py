@@ -11,6 +11,7 @@ import time
 import uuid
 import zlib
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 
 from django.db import transaction
@@ -26,6 +27,10 @@ from .models import Run, TimeReading
 START, FINISH = 'START', 'FINISH'
 MAX_FENCES = 24
 MAX_NAME = 100
+MAX_TIME_ALLOWED = 999         # seconds
+MAX_POINTS = Decimal('99.99')  # what one fault can cost
+MAX_REFUSALS = 2               # per fence; one more click clears them
+RULES = ('time_allowed', 'knockdown_points', 'refusal_points', 'overtime_points')
 NEARBY_MS = 120_000    # a signal this close to a session can still be picked although it was not captured
 NEARBY_LIMIT = 12      # ... at most this many of them per column
 KEEP = object()        # "leave this pick as it is"
@@ -76,6 +81,44 @@ def _fence_count(value):
     return value
 
 
+def _time_allowed(value):
+    """The time allowed in whole seconds, or None for a competition without one."""
+    if value is None:
+        return None
+    if type(value) is not int or not 1 <= value <= MAX_TIME_ALLOWED:
+        raise ArenaError(f'The time allowed must be a whole number of seconds from 1 to {MAX_TIME_ALLOWED}, or empty')
+    return value
+
+
+def _points(value):
+    """What a fault costs: a number from 0 to 99.99 with at most two decimals."""
+    try:
+        points = Decimal(str(value)) if type(value) in (int, float) else None
+    except InvalidOperation:
+        points = None
+    if (points is None or not points.is_finite() or not 0 <= points <= MAX_POINTS
+            or points != points.quantize(Decimal('0.01'))):
+        raise ArenaError('Penalty points must be a number from 0 to 99.99 with at most two decimals')
+    return points.quantize(Decimal('0.01'))
+
+
+def _apply_rules(competition, rules):
+    """Set the scoring rules that are given (keys of RULES)."""
+    if 'time_allowed' in rules:
+        competition.time_allowed = _time_allowed(rules['time_allowed'])
+    for key in RULES[1:]:
+        if key in rules:
+            setattr(competition, key, _points(rules[key]))
+
+
+def _fence(label, competition, elements=True):
+    """A fence label of this competition: "7", and with `elements` also "7B"."""
+    m = _FENCE_RE.fullmatch(label) if isinstance(label, str) else None
+    if m is None or not 1 <= int(m.group(1)) <= competition.fence_count or (m.group(2) and not elements):
+        raise ArenaError('No such fence')
+    return label
+
+
 def _entries(competition):
     return list(competition.starts.select_related('participant').order_by('starting_order', 'pk'))
 
@@ -108,20 +151,31 @@ def list_competitions():
         n_entries=Count('starts', distinct=True),
         n_runs=Count('starts__runs', filter=Q(starts__runs__status=Run.Status.SAVED), distinct=True),
     ).order_by('-start_date_time', 'name')
-    return [{'id': str(c.pk), 'name': c.name, 'fence_count': c.fence_count,
-             'entries': c.n_entries, 'runs': c.n_runs} for c in rows]
+    return [{**_competition(c), 'entries': c.n_entries, 'runs': c.n_runs} for c in rows]
 
 
-def create_competition(name, fence_count=12):
-    return Competition.objects.create(name=_name(name), fence_count=_fence_count(fence_count))
+def _competition(c):
+    return {'id': str(c.pk), 'name': c.name, 'fence_count': c.fence_count,
+            'time_allowed': c.time_allowed,
+            'knockdown_points': float(c.knockdown_points), 'refusal_points': float(c.refusal_points),
+            'overtime_points': float(c.overtime_points)}
 
 
-def update_competition(competition, name=KEEP, fence_count=KEEP):
+def create_competition(name, fence_count=12, **rules):
+    """`rules`: any of RULES; what is not given gets the usual values (4 / 4 / 0.4, no time allowed)."""
+    competition = Competition(name=_name(name), fence_count=_fence_count(fence_count))
+    _apply_rules(competition, rules)
+    competition.save()
+    return competition
+
+
+def update_competition(competition, name=KEEP, fence_count=KEEP, **rules):
     if name is not KEEP:
         competition.name = _name(name)
     if fence_count is not KEEP:
         competition.fence_count = _fence_count(fence_count)
-    competition.save(update_fields=['name', 'fence_count'])
+    _apply_rules(competition, rules)
+    competition.save()
 
 
 # --- the list of competitors ----------------------------------------------------
@@ -250,15 +304,44 @@ def _fence_key(label):
 
 
 def toggle_penalty(run, fence):
+    """Mark, or unmark, that fence (or one element of it) as knocked down."""
     _require_open(run)
-    m = _FENCE_RE.fullmatch(fence) if isinstance(fence, str) else None
-    if m is None or not 1 <= int(m.group(1)) <= run.entry.competition.fence_count:
-        raise ArenaError('No such fence')
+    _fence(fence, run.entry.competition)
     penalties = [p for p in run.penalties if p != fence]
     if len(penalties) == len(run.penalties):
         penalties.append(fence)
     run.penalties = sorted(penalties, key=_fence_key)
     run.save(update_fields=['penalties'])
+
+
+def cycle_refusal(run, fence):
+    """One more refusal at that fence; after MAX_REFUSALS the next one clears them."""
+    _require_open(run)
+    _fence(fence, run.entry.competition, elements=False)
+    refusals = dict(run.refusals)
+    count = refusals.pop(fence, 0) + 1
+    if count <= MAX_REFUSALS:
+        refusals[fence] = count
+    run.refusals = dict(sorted(refusals.items(), key=lambda item: int(item[0])))
+    run.save(update_fields=['refusals'])
+
+
+def score(run, time_ms):
+    """Penalty points of a run under its competition's rules: (at the fences, for the time).
+
+    Every FULL second over the time allowed costs: 0.99 s over is free.
+    """
+    rules = run.entry.competition
+    fences = rules.knockdown_points * len(run.penalties) + rules.refusal_points * sum(run.refusals.values())
+    seconds_over = 0
+    if time_ms is not None and rules.time_allowed is not None:
+        seconds_over = max(time_ms - rules.time_allowed * 1000, 0) // 1000
+    return fences, rules.overtime_points * seconds_over
+
+
+def _points_json(run, time_ms):
+    fences, overtime = score(run, time_ms)
+    return {'fence_points': float(fences), 'time_points': float(overtime), 'points': float(fences + overtime)}
 
 
 def pick(run, start=KEEP, finish=KEEP):
@@ -320,16 +403,32 @@ def chosen(run) -> Chosen:
     return Chosen(starts, finishes, start, finish, picked is None, finish_auto, time_ms)
 
 
-def save_run(run):
-    """Freeze the session and move on to the next competitor in the list."""
+def save_run(run, outcome=Run.Outcome.FINISHED, fence=None):
+    """Freeze the session and move on to the next competitor in the list.
+
+    `outcome` RETIRED / ELIMINATED closes a round that was not completed: it
+    keeps its penalties and signals but gets no time; `fence` may say where it
+    ended.
+    """
     _require_open(run)
+    if outcome not in Run.Outcome.values:
+        raise ArenaError('The outcome must be FINISHED, RETIRED or ELIMINATED')
+    completed = outcome == Run.Outcome.FINISHED
+    if fence in (None, ''):
+        fence = ''
+    elif completed:
+        raise ArenaError('Only a retired or eliminated round ends at a fence')
+    else:
+        _fence(fence, run.entry.competition)
     c = chosen(run)
     if run.capturing:
         run.capturing = False
         run.capture_to = now_ms()
     run.start_pick = c.start
     run.finish_pick = c.finish
-    run.time_ms = c.time_ms
+    run.time_ms = c.time_ms if completed else None
+    run.outcome = outcome
+    run.outcome_fence = fence
     run.status = Run.Status.SAVED
     run.saved_at = timezone.now()
     run.save()
@@ -356,7 +455,9 @@ def reopen_run(run):
     run.capturing = False
     run.time_ms = None
     run.saved_at = None
-    run.save(update_fields=['status', 'capturing', 'time_ms', 'saved_at'])
+    run.outcome = Run.Outcome.FINISHED
+    run.outcome_fence = ''
+    run.save(update_fields=['status', 'capturing', 'time_ms', 'saved_at', 'outcome', 'outcome_fence'])
     competition = run.entry.competition
     competition.selected_start = run.entry
     competition.save(update_fields=['selected_start'])
@@ -432,11 +533,13 @@ def _session(run, position, now):
         'run_id': str(run.pk), 'entry_id': str(run.entry_id), 'number': position,
         'capturing': run.capturing,
         'penalties': list(run.penalties),
+        'refusals': dict(run.refusals),
         'starts': starts, 'finishes': finishes,
         'start_id': str(c.start.pk) if c.start else None,
         'finish_id': str(c.finish.pk) if c.finish else None,
         'start_auto': c.start_auto, 'finish_auto': c.finish_auto,
         'time_ms': c.time_ms,
+        **_points_json(run, c.time_ms),
     }
 
 
@@ -457,17 +560,20 @@ def snapshot(competition):
                     'competition_name': current.entry.competition.name}
     entries = []
     for entry in _entries(competition):
-        entries.append({
-            'id': str(entry.pk), 'name': entry.participant.name, 'horse': entry.horse_name,
-            'runs': [{'id': str(r.pk), 'number': i + 1, 'status': r.status,
-                      'time_ms': session['time_ms'] if session and r.pk == current.pk else r.time_ms,
-                      'penalties': list(r.penalties)}
-                     for i, r in enumerate(runs.get(entry.pk, []))],
-        })
+        entry.competition = competition                     # score() reads the rules from here: no query per run
+        rows = []
+        for i, r in enumerate(runs.get(entry.pk, [])):
+            r.entry = entry
+            time_ms = session['time_ms'] if session and r.pk == current.pk else r.time_ms
+            rows.append({'id': str(r.pk), 'number': i + 1, 'status': r.status, 'time_ms': time_ms,
+                         'penalties': list(r.penalties), 'refusals': dict(r.refusals),
+                         'outcome': r.outcome, 'outcome_fence': r.outcome_fence,
+                         **_points_json(r, time_ms)})
+        entries.append({'id': str(entry.pk), 'name': entry.participant.name, 'horse': entry.horse_name,
+                        'runs': rows})
     return {
         'server_time': now,
-        'competition': {'id': str(competition.pk), 'name': competition.name,
-                        'fence_count': competition.fence_count},
+        'competition': _competition(competition),
         'entries': entries,
         'selected_entry': str(competition.selected_start_id) if competition.selected_start_id else None,
         'session': session,

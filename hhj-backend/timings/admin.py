@@ -12,6 +12,6 @@ class TimeReadingAdmin(admin.ModelAdmin):
 
 @admin.register(Run)
 class RunAdmin(admin.ModelAdmin):
-  list_display = ['entry', 'number', 'status', 'time_ms', 'penalties', 'capturing', 'saved_at']
+  list_display = ['entry', 'number', 'status', 'outcome', 'time_ms', 'penalties', 'refusals', 'capturing', 'saved_at']
   list_filter = ['status', 'entry__competition']
   ordering = ['-opened_ms']

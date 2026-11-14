@@ -61,7 +61,12 @@ export function TopBar() {
                 >
                     + New competition
                 </button>
-                {current && <span className="fence-count-note">{current.fence_count} fences</span>}
+                {current && (
+                    <span className="fence-count-note">
+                        {current.fence_count} fences
+                        {current.time_allowed !== null && <> · time allowed {current.time_allowed} s</>}
+                    </span>
+                )}
 
                 <div className="topbar-status">
                     <button
@@ -100,8 +105,8 @@ export function TopBar() {
                         submitLabel="Create"
                         busy={snap.pending.has('competition:create')}
                         onCancel={() => setForm(null)}
-                        onSubmit={async (name, fences) => {
-                            const r = await store.createCompetition(name, fences)
+                        onSubmit={async (competition) => {
+                            const r = await store.createCompetition(competition)
                             if (r.ok) setForm(null)
                         }}
                     />
@@ -112,13 +117,12 @@ export function TopBar() {
                     <strong>Edit competition</strong>
                     <CompetitionForm
                         key={current.id}
-                        initialName={current.name}
-                        initialFences={current.fence_count}
+                        initial={current}
                         submitLabel="Save"
                         busy={snap.pending.has('competition:update')}
                         onCancel={() => setForm(null)}
-                        onSubmit={async (name, fence_count) => {
-                            const r = await store.updateCompetition({ name, fence_count })
+                        onSubmit={async (competition) => {
+                            const r = await store.updateCompetition(competition)
                             if (r.ok) setForm(null)
                         }}
                     />

@@ -1,5 +1,5 @@
 // Test doubles: a scriptable fake API (fetch), a fake WebSocket and state fixtures.
-import type { ArenaState, CompetitionSummary, Entry, Session } from '../api/types'
+import type { ArenaState, CompetitionSummary, Entry, Rules, Run, Session } from '../api/types'
 import type { StoreDeps, WebSocketLike } from '../state/store'
 
 export interface Call {
@@ -122,6 +122,34 @@ export function makeDeps(api: FakeApi): TestDeps {
 
 export const CID = 'c1'
 
+/** The rules a competition has unless the operator changes them. */
+export const RULES: Rules = { time_allowed: null, knockdown_points: 4, refusal_points: 4, overtime_points: 0.4 }
+
+/**
+ * A saved, completed run. Its points follow the usual rules (4 per knockdown,
+ * 4 per refusal) unless given, as the server would send them.
+ */
+export function run(id: string, time_ms: number | null, patch: Partial<Run> = {}): Run {
+    const penalties = patch.penalties ?? []
+    const refusals = patch.refusals ?? {}
+    const fence_points = patch.fence_points ?? 4 * penalties.length + 4 * Object.values(refusals).reduce((a, b) => a + b, 0)
+    const time_points = patch.time_points ?? 0
+    return {
+        id,
+        number: 1,
+        status: 'SAVED',
+        time_ms,
+        outcome: 'FINISHED',
+        outcome_fence: '',
+        ...patch,
+        penalties,
+        refusals,
+        fence_points,
+        time_points,
+        points: patch.points ?? fence_points + time_points,
+    }
+}
+
 export function entry(id: string, name: string, runs: Entry['runs'] = [], horse = ''): Entry {
     return { id, name, horse, runs }
 }
@@ -133,6 +161,10 @@ export function session(patch: Partial<Session> = {}): Session {
         number: 1,
         capturing: true,
         penalties: [],
+        refusals: {},
+        fence_points: 0,
+        time_points: 0,
+        points: 0,
         starts: [],
         finishes: [],
         start_id: null,
@@ -147,7 +179,7 @@ export function session(patch: Partial<Session> = {}): Session {
 export function makeState(patch: Partial<ArenaState> = {}): ArenaState {
     return {
         server_time: 1_800_000_000_000,
-        competition: { id: CID, name: 'Saturday open', fence_count: 12 },
+        competition: { id: CID, name: 'Saturday open', fence_count: 12, ...RULES },
         entries: [entry('e1', 'Zosia'), entry('e2', 'Kuba'), entry('e3', 'Ola')],
         selected_entry: 'e1',
         session: null,
@@ -162,7 +194,7 @@ export function makeState(patch: Partial<ArenaState> = {}): ArenaState {
 }
 
 export function summary(id = CID, name = 'Saturday open'): CompetitionSummary {
-    return { id, name, fence_count: 12, entries: 3, runs: 0 }
+    return { id, name, fence_count: 12, ...RULES, entries: 3, runs: 0 }
 }
 
 /** Fake API pre-wired with a competition list and its state. */

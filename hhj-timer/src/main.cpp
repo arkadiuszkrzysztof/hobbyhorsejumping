@@ -1,14 +1,14 @@
-// hhj-timer v1.1 — 4-digit stopwatch display, XIAO ESP32-C3 + 4x TPIC6B595.
+// hhj-timer v1.2 — 4-digit display of the backend's timing, XIAO ESP32-C3 + 4x TPIC6B595.
 //
 // This file is only the hardware glue. Everything the display decides lives in
 // plain C++ that is tested on the host (make test-firmware):
 //   include/display.h    digits and frames          (test/test_display.cpp)
-//   include/stopwatch.h  START/FINISH -> time       (test/test_stopwatch.cpp)
+//   include/remote.h     the backend's SHOW -> time (test/test_remote.cpp)
 //   include/timer_app.h  what to show, when, hello  (test/test_timer_app.cpp)
 //   ../hhj-common        WiFi plan, protocol        (hhj-common/test)
 // Keep this file free of decisions: nothing here is covered by a test.
 //
-// Serial console (115200): s = start, f = finish, r = reset, t = lamp test.
+// Serial console (115200): t = lamp test.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -20,7 +20,7 @@
 #include "hhj/wifi_config.h"
 #include "timer_app.h"
 
-#define FW_VERSION "1.1.0"
+#define FW_VERSION "1.2.0"
 
 static const hhj::Segments kSegments = {SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G};
 
@@ -89,7 +89,7 @@ void loop() {
 }
 
 #else
-// ------------------------------------------------------------- STOPWATCH
+// ----------------------------------------------------------------- DISPLAY
 class ArduinoTimerHal final : public hhj::TimerHal {
  public:
   int64_t now_ms() override { return esp_timer_get_time() / 1000; }          // 64-bit: never wraps
@@ -144,8 +144,6 @@ static hhj::TimerAppConfig make_config() {
   c.fw = FW_VERSION;
   c.segments = kSegments;
   c.chain_first_is_left = CHAIN_FIRST_IS_LEFT != 0;
-  c.stopwatch.min_run_ms = MIN_RUN_MS;
-  c.stopwatch.run_timeout_ms = RUN_TIMEOUT_MS;
   c.result_blink_ms = RESULT_BLINK_MS;
   c.wifi.attempt_ms = HHJ_WIFI_ATTEMPT_MS;
   c.wifi.has_fallback = sizeof(HHJ_WIFI_FALLBACK_SSID) > 1;

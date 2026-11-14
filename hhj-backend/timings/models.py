@@ -54,6 +54,11 @@ class Run(models.Model):
   class Status(models.TextChoices):
     OPEN = 'OPEN'
     SAVED = 'SAVED'
+
+  class Outcome(models.TextChoices):
+    FINISHED = 'FINISHED'
+    RETIRED = 'RETIRED'        # the competitor gave up on the way
+    ELIMINATED = 'ELIMINATED'  # the round was ended for them, e.g. after a fall
   id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
   entry = models.ForeignKey(CompetitionStart, on_delete=models.CASCADE, related_name='runs')
   number = models.PositiveSmallIntegerField()   # 1 = first try of this competitor, 2 = second ...
@@ -64,7 +69,11 @@ class Run(models.Model):
   capture_to = models.BigIntegerField(null=True, blank=True)    # epoch ms, latest "stop registering"; null while on
   start_pick = models.ForeignKey(TimeReading, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
   finish_pick = models.ForeignKey(TimeReading, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
-  penalties = models.JSONField(default=list, blank=True)        # fence labels: ["7", "9B"]
+  penalties = models.JSONField(default=list, blank=True)        # knocked-down fences, by label: ["7", "9B"]
+  refusals = models.JSONField(default=dict, blank=True)         # refusals per fence number: {"5": 2}
+  # how a saved run ended; a retired or eliminated one has no time, and may say at which fence
+  outcome = models.CharField(max_length=12, choices=Outcome.choices, default=Outcome.FINISHED)
+  outcome_fence = models.CharField(max_length=3, blank=True, default='')
   time_ms = models.BigIntegerField(null=True, blank=True)       # the result; set when saved
   saved_at = models.DateTimeField(null=True, blank=True)
 

@@ -24,15 +24,16 @@ configured.
 ```
 
 - A gate reports a rider when both of its beams are cut together. It says
-  *how long ago* that happened (`age_ms`), not *when* — so the display and the
-  server each time the run on their own clock and no clock has to be synced.
+  *how long ago* that happened (`age_ms`), not *when* — so the server times
+  the run on its own clock and no clock has to be synced.
 - Every crossing is sent seven times within a third of a second (and then once
   a second until the server confirms it). Receivers keep the quickest copy,
   which takes WiFi delay out of the result.
-- While the server is on, it tells the display what to show, so the display
-  always agrees with the operator console — also when the operator picks a
-  different START or FINISH for the run. If the server is silent for 5 s the
-  display goes back to timing the gates by itself; the server needs no display.
+- The display never times a run by itself. The server tells it what to show,
+  so it always agrees with the operator console — also when the operator picks
+  a different START or FINISH — and the clock only ever runs for a rider who is
+  being registered. Without the server (not started yet, or silent for 5 s) it
+  shows the state of the gates and nothing else. The server needs no display.
 
 The wire format is in [hhj-common/PROTOCOL.md](hhj-common/PROTOCOL.md), the
 console's API in [hhj-backend/API.md](hhj-backend/API.md).
@@ -46,22 +47,23 @@ console's API in [hhj-backend/API.md](hhj-backend/API.md).
    a beam has been cut for more than 5 s.
 3. **Display** — power it. `8888` for a second, then:
 
-   | Display               | Meaning                                                                              |
-   |-----------------------|--------------------------------------------------------------------------------------|
-   | `----` blinking       | no WiFi                                                                              |
-   | `----` steady         | both gates online and ready (left two digits = START, right = FINISH)                |
-   | `__` on one side      | that gate has not been heard from for 7 s                                            |
-   | `¯¯` on one side      | that gate is online but a beam is blocked / not aligned                              |
-   | `0.00`                | the console is registering a rider who has not started yet                           |
-   | counting              | a run is on (`SS.hh`; from 100 s on `M:SS`)                                          |
-   | blinking, then steady | the result; it stays until the next rider (or the next START when the server is off) |
+   | Display               | Meaning                                                               |
+   |-----------------------|-----------------------------------------------------------------------|
+   | `----` blinking       | no WiFi                                                               |
+   | `----` steady         | both gates online and ready (left two digits = START, right = FINISH) |
+   | `__` on one side      | that gate has not been heard from for 7 s                             |
+   | `¯¯` on one side      | that gate is online but a beam is blocked / not aligned               |
+   | `0.00`                | the console is registering a rider who has not started yet            |
+   | counting              | a run is on (`SS.hh`; from 100 s on `M:SS`)                           |
+   | blinking, then steady | the result; it stays until the next rider                             |
 
 4. **Console** — `make frontend`, then open <http://localhost:3000> (from a
    tablet on the same WiFi: `http://<this computer's IP address>:3000`).
 
 On the Windows machine at the arena, [start-hhj.bat](start-hhj.bat) does steps
-1 and 4: it starts the server and the console in two windows and opens the
-console in the browser. To run it at logon press Win+R, type `shell:startup`
+1 and 4: it fetches the newest version (`git pull`; if that is not possible it
+carries on with what is there), starts the server and the console in two
+windows and opens the console in the browser. To run it at logon press Win+R, type `shell:startup`
 and put a shortcut to the file there. Its header lists what it needs.
 
 Check what the server sees: `curl localhost:3003/devices/` and
@@ -69,7 +71,11 @@ Check what the server sees: `curl localhost:3003/devices/` and
 
 ## Running a competition
 
-Create a competition in the console (name, number of fences), then:
+Create a competition in the console: its name, the number of fences, the time
+allowed for the course (optional) and what a fault costs — 4 points for a
+knockdown, 4 for a refusal and 0.4 for every full second over the time allowed
+unless you change them. All of it can be edited later; results are rescored.
+Then:
 
 1. **Riders** are the list on the left. Add, rename, remove and drag them into
    order at any time. A rider can sign up with the name of their horse
@@ -83,21 +89,36 @@ Create a competition in the console (name, number of fences), then:
    Every console rings a bell when registering starts or resumes — the
    rider's signal to go. *Bell on / off* in the top bar is per browser, and
    switching it on rings it once to test the speakers.
-3. **Fences**: one click on a number marks a penalty on that fence, one click
-   on A / B / C under it marks that element (`9B`). Click again to take it back.
+3. **Fences**: one click on a number marks that fence as knocked down, one
+   click on A / B / C under it marks that element (`9B`); click again to take
+   it back. **R** marks a refusal at the fence: a second click a second
+   refusal, a third clears them. The panel shows the score as it stands.
 4. **START and FINISH signals** of the session are listed in two columns. The
    first START and the last FINISH after it are used unless you click another
    one; the time on the console and on the big display follow at once.
    Crossings from just before or after the session are offered too, marked
    *outside session*.
-5. **Save** stores the run (time, penalties, chosen signals) with the rider.
+5. **Save** stores the run (time, faults, chosen signals) with the rider.
+   If the round was not completed use **Retire** (the rider gave up) or
+   **Eliminate** (e.g. after a fall) instead: the round is kept with its
+   faults and, if you say so, the fence where it ended — but without a time.
    A saved run can be reopened or deleted; a session can be discarded or
    moved to another rider if the wrong one was selected.
 
+A result reads like `24.50 · 9.6 pts (8+1.6)`: the time, the penalty points,
+and in brackets how they split into fences + time when the time cost
+something. `RET @7` / `ELI` mark a round that was retired from (at fence 7) or
+eliminated.
+
 **Ranking**, above the rider list, sorts it by result instead of start order:
-fewest penalties first (each marked fence or element is one point), then the
-fastest time, so a clean 30 s beats 20 s with one penalty. A rider's best run
-counts and is the one highlighted.
+fewest penalty points first, then the fastest time, so a clean 30 s beats 20 s
+with one knockdown. A rider's best completed run counts and is the one
+highlighted; riders who only retired or were eliminated follow without a
+place, then those who have not ridden.
+
+The list follows the selection: whenever another rider becomes the selected
+one — by a click or by *Save & next* — the list brings them to the middle.
+Clicking the selected rider again deselects (not while their session is open).
 
 Everything is in the server's database (`hhj-backend/db.sqlite3`); several
 browsers can be open at once and stay in step.

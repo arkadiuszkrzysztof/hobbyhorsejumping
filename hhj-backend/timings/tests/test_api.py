@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 from timings import arena
 from timings.ingest import ingest_event
 from timings.models import Run
-from timings.tests.helpers import event
+from timings.tests.helpers import USUAL_RULES, event, run_row
 
 T0 = 1_794_000_000_000
 STATE_KEYS = {'server_time', 'competition', 'entries', 'selected_entry', 'session', 'busy', 'devices'}
@@ -42,16 +42,16 @@ class CompetitionApiTests(ApiCase):
         state = self.new_competition('Saturday open', fence_count=18)
         self.assertEqual(set(state), STATE_KEYS)
         cid = state['competition']['id']
-        self.assertEqual(state['competition'], {'id': cid, 'name': 'Saturday open', 'fence_count': 18})
+        self.assertEqual(state['competition'], {'id': cid, 'name': 'Saturday open', 'fence_count': 18, **USUAL_RULES})
         self.assertEqual((state['entries'], state['selected_entry'], state['session'], state['busy']),
                          ([], None, None, None))
         self.assertEqual(self.call('get', '/api/competitions/'),
-                         [{'id': cid, 'name': 'Saturday open', 'fence_count': 18, 'entries': 0, 'runs': 0}])
+                         [{'id': cid, 'name': 'Saturday open', 'fence_count': 18, **USUAL_RULES, 'entries': 0, 'runs': 0}])
         self.assertEqual(self.call('get', f'/api/competitions/{cid}/state/')['competition']['name'], 'Saturday open')
         patched = self.call('patch', f'/api/competitions/{cid}/', {'name': 'Sunday', 'fence_count': 12})
-        self.assertEqual(patched['competition'], {'id': cid, 'name': 'Sunday', 'fence_count': 12})
+        self.assertEqual(patched['competition'], {'id': cid, 'name': 'Sunday', 'fence_count': 12, **USUAL_RULES})
         only_name = self.call('patch', f'/api/competitions/{cid}/', {'name': 'Monday'})
-        self.assertEqual(only_name['competition'], {'id': cid, 'name': 'Monday', 'fence_count': 12})
+        self.assertEqual(only_name['competition'], {'id': cid, 'name': 'Monday', 'fence_count': 12, **USUAL_RULES})
 
     def test_default_fence_count(self):
         self.assertEqual(self.new_competition()['competition']['fence_count'], 12)
@@ -163,6 +163,62 @@ class FlowApiTests(ApiCase):
         first = self.call('get', f'{base}/state/')['entries'][0]
         self.assertEqual((first['name'], first['horse']), ('Ala', 'Stormy'))
 
+    def test_scoring_rules(self):
+        made = self.call('post', '/api/competitions/', {'name': 'With rules', 'fence_count': 10, 'time_allowed': 45,
+                                                        'knockdown_points': 3, 'refusal_points': 2.5,
+                                                        'overtime_points': 0.25}, 201)['competition']
+        self.assertEqual({key: made[key] for key in arena.RULES},
+                         {'time_allowed': 45, 'knockdown_points': 3.0, 'refusal_points': 2.5, 'overtime_points': 0.25})
+        changed = self.call('patch', f"/api/competitions/{made['id']}/", {'time_allowed': None, 'overtime_points': 1})
+        self.assertEqual({key: changed['competition'][key] for key in arena.RULES},
+                         {'time_allowed': None, 'knockdown_points': 3.0, 'refusal_points': 2.5, 'overtime_points': 1.0})
+        for bad in ({'time_allowed': 0}, {'time_allowed': '45'}, {'knockdown_points': -1}, {'refusal_points': 'x'},
+                    {'overtime_points': 0.123}, {'name': 'ok', 'time_allowed': 45.5}):
+            self.call('patch', f"/api/competitions/{made['id']}/", bad, 400)
+            self.call('post', '/api/competitions/', {'name': 'Bad', **bad}, 400)
+        self.assertEqual(len(self.call('get', '/api/competitions/')), 2)    # no "Bad" one was created
+        self.assertEqual(self.call('get', f"/api/competitions/{made['id']}/state/")['competition'], changed['competition'])
+
+    def test_refusals_and_points(self):
+        self.call('patch', f'/api/competitions/{self.cid}/', {'time_allowed': 20})
+        with mock.patch('timings.arena.now_ms', return_value=T0):
+            rid = self.start_session(self.cid)['session']['run_id']
+        self.signal('START', T0 + 1000, 1)
+        self.signal('FINISH', T0 + 25_500, 1)
+        self.call('post', f'/api/runs/{rid}/penalty/', {'fence': '3'})
+        self.call('post', f'/api/runs/{rid}/penalty/', {'fence': '7B'})
+        s = self.call('post', f'/api/runs/{rid}/refusal/', {'fence': '5'})['session']
+        self.assertEqual((s['refusals'], s['points'], s['fence_points'], s['time_points']), ({'5': 1}, 13.6, 12.0, 1.6))
+        s = self.call('post', f'/api/runs/{rid}/refusal/', {'fence': '5'})['session']
+        self.assertEqual((s['refusals'], s['points']), ({'5': 2}, 17.6))
+        s = self.call('post', f'/api/runs/{rid}/refusal/', {'fence': '5'})['session']
+        self.assertEqual((s['refusals'], s['points']), ({}, 9.6))
+        for bad in ({'fence': '7B'}, {'fence': '13'}, {'fence': 5}, {}):
+            self.call('post', f'/api/runs/{rid}/refusal/', bad, 400)
+        saved = self.call('post', f'/api/runs/{rid}/save/')
+        self.assertEqual(saved['entries'][0]['runs'], [run_row(9.6, 1.6, id=rid, number=1, status='SAVED',
+                                                               time_ms=24_500, penalties=['3', '7B'])])
+        self.call('post', f'/api/runs/{rid}/refusal/', {'fence': '5'}, 409)
+        self.call('post', f'/api/runs/{uuid.uuid4()}/refusal/', {'fence': '5'}, 404)
+
+    def test_retire_and_eliminate(self):
+        rid = self.start_session(self.cid)['session']['run_id']
+        self.call('post', f'/api/runs/{rid}/penalty/', {'fence': '2'})
+        for bad in ({'outcome': 'DNF'}, {'outcome': 'RETIRED', 'fence': '13'}, {'outcome': 'FINISHED', 'fence': '2'},
+                    {'outcome': None}):
+            self.call('post', f'/api/runs/{rid}/save/', bad, 400)
+        retired = self.call('post', f'/api/runs/{rid}/save/', {'outcome': 'RETIRED', 'fence': '4'})
+        self.assertIsNone(retired['session'])
+        self.assertEqual(retired['selected_entry'], self.ids[1])
+        self.assertEqual(retired['entries'][0]['runs'], [run_row(4.0, id=rid, number=1, status='SAVED', time_ms=None,
+                                                                 penalties=['2'], outcome='RETIRED', outcome_fence='4')])
+        rid2 = self.start_session(self.cid)['session']['run_id']
+        eliminated = self.call('post', f'/api/runs/{rid2}/save/', {'outcome': 'ELIMINATED'})
+        row = eliminated['entries'][1]['runs'][0]
+        self.assertEqual((row['outcome'], row['outcome_fence'], row['time_ms']), ('ELIMINATED', '', None))
+        reopened = self.call('post', f'/api/runs/{rid}/reopen/')
+        self.assertEqual(reopened['entries'][0]['runs'][0]['outcome'], 'FINISHED')
+
     def test_select(self):
         base = f'/api/competitions/{self.cid}'
         self.assertEqual(self.call('post', f'{base}/select/', {'entry': self.ids[2]})['selected_entry'], self.ids[2])
@@ -219,7 +275,7 @@ class FlowApiTests(ApiCase):
         self.assertIsNone(saved['session'])
         self.assertEqual(saved['selected_entry'], self.ids[1])                  # on to Bea
         self.assertEqual(saved['entries'][0]['runs'],
-                         [{'id': rid, 'number': 1, 'status': 'SAVED', 'time_ms': 19_000, 'penalties': ['7', '9B']}])
+                         [run_row(8.0, id=rid, number=1, status='SAVED', time_ms=19_000, penalties=['7', '9B'])])
         # a saved run is closed for changes ...
         self.call('post', f'/api/runs/{rid}/penalty/', {'fence': '1'}, 409)
         self.call('post', f'/api/runs/{rid}/pick/', {'start': None}, 409)

@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import {
     DndContext,
     KeyboardSensor,
@@ -17,16 +17,13 @@ import {
 } from '@dnd-kit/sortable'
 import type { Entry, Run } from '../api/types'
 import { sortPenalties } from '../lib/fences'
+import { OUTCOME_TAG, pointsText, runText } from '../lib/points'
 import { ranking } from '../lib/ranking'
+import { centredScrollTop } from '../lib/scroll'
 import { formatTime } from '../lib/time'
 import { useStore } from '../state/context'
 import { useAsk, useConfirm } from './AskDialog'
 import { HorseName } from './HorseName'
-
-export function runChipText(run: Run): string {
-    if (run.status === 'OPEN') return 'live'
-    return `${formatTime(run.time_ms)} · ${run.penalties.length} pen`
-}
 
 export function CompetitorList() {
     const [snap, store] = useStore()
@@ -36,13 +33,37 @@ export function CompetitorList() {
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
     )
+    const pane = useRef<HTMLElement>(null)
+    const selectedId = state?.selected_entry ?? null
+    // Whenever somebody else becomes the selected competitor (a click, "Save &
+    // next", another console) bring that row to the middle of the list. Only
+    // then: scrolling away afterwards is the operator's business.
+    useEffect(() => {
+        const list = pane.current
+        const row = selectedId && list?.querySelector<HTMLElement>(`[data-entry="${selectedId}"]`)
+        if (!list || !row) return
+        const top = centredScrollTop(
+            { top: row.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop, height: row.offsetHeight },
+            {
+                height: list.clientHeight,
+                coveredBottom: list.querySelector<HTMLElement>('.add-competitor')?.offsetHeight ?? 0,
+                scrollHeight: list.scrollHeight,
+            }
+        )
+        if (typeof list.scrollTo === 'function') list.scrollTo({ top, behavior: 'smooth' })
+        else list.scrollTop = top
+    }, [selectedId])
     if (!state) return <aside className="competitors" />
 
     const ids = state.entries.map((e) => e.id)
     const ranked = snap.listOrder === 'ranking'
     // One row per competitor: its number is the start position, or the place in the ranking.
     const rows = ranked
-        ? ranking(state.entries).map((r) => ({ entry: r.entry, position: r.place, bestRunId: r.result?.run.id ?? null }))
+        ? ranking(state.entries).map((r) => ({
+              entry: r.entry,
+              position: r.place ?? r.mark,
+              bestRunId: r.result?.run.id ?? null,
+          }))
         : state.entries.map((entry, i) => ({ entry, position: i + 1, bestRunId: null }))
     const ordering = snap.pending.has('order')
     const sessionEntryId = state.session?.entry_id ?? null
@@ -57,8 +78,14 @@ export function CompetitorList() {
         move(ids.indexOf(String(ev.active.id)), ids.indexOf(String(ev.over.id)))
     }
 
-    const select = async (entry: Entry) => {
-        if (entry.id === state.selected_entry) return
+    const select = async (entry: Entry, clicks: number) => {
+        if (entry.id === state.selected_entry) {
+            // Clicking the selected competitor again deselects — unless a session
+            // is open (save or discard it first), and not on the second click of
+            // a double click.
+            if (!state.session && clicks <= 1) await store.select(null)
+            return
+        }
         const r = await store.select(entry.id)
         if (r.ok || r.status !== 409) return
         const current = store.getSnapshot().state
@@ -81,7 +108,7 @@ export function CompetitorList() {
     }
 
     return (
-        <aside className="competitors" aria-label="Competitors">
+        <aside className="competitors" aria-label="Competitors" ref={pane}>
             <div className="list-head">
                 <h2 className="section-title">
                     Competitors <span className="muted">({state.entries.length})</span>
@@ -113,7 +140,7 @@ export function CompetitorList() {
                                     isFirst={i === 0}
                                     isLast={i === ids.length - 1}
                                     ordering={ordering}
-                                    onSelect={() => void select(entry)}
+                                    onSelect={(clicks) => void select(entry, clicks)}
                                     onMove={(delta) => move(i, i + delta)}
                                 />
                             )
@@ -129,8 +156,8 @@ export function CompetitorList() {
 
 interface RowProps {
     entry: Entry
-    /** Start position or place in the ranking; null = not ranked yet. */
-    position: number | null
+    /** Start position; in the ranking the place, RET / ELI, or null = no result yet. */
+    position: number | string | null
     /** The run that counts in the ranking, to mark its chip. */
     bestRunId: string | null
     /** False in the ranking: the order is not the operator's to change there. */
@@ -140,7 +167,8 @@ interface RowProps {
     isFirst: boolean
     isLast: boolean
     ordering: boolean
-    onSelect: () => void
+    /** `clicks`: 1 for a click, 2 for the second click of a double click, 0 from the keyboard. */
+    onSelect: (clicks: number) => void
     onMove: (delta: number) => void
 }
 
@@ -191,13 +219,22 @@ function EntryRow({
     }
 
     const runMenu = async (run: Run) => {
-        const pens = sortPenalties(run.penalties)
+        const knocked = sortPenalties(run.penalties)
+        const refused = Object.entries(run.refusals).map(([fence, count]) => (count > 1 ? `${fence} ×${count}` : fence))
+        const tag = OUTCOME_TAG[run.outcome]
         const choice = await ask({
             title: `${entry.name} — try ${run.number}`,
             message: (
                 <p>
-                    Saved: <strong>{formatTime(run.time_ms)}</strong>,{' '}
-                    {pens.length === 0 ? 'no penalties' : `penalties ${pens.join(', ')}`}.
+                    Saved:{' '}
+                    <strong>
+                        {tag === null
+                            ? formatTime(run.time_ms)
+                            : `${run.outcome === 'RETIRED' ? 'retired' : 'eliminated'}${run.outcome_fence ? ` at fence ${run.outcome_fence}` : ''}`}
+                    </strong>
+                    , {pointsText(run)}
+                    {knocked.length > 0 && <> — knocked down {knocked.join(', ')}</>}
+                    {refused.length > 0 && <> — refused {refused.join(', ')}</>}.
                 </p>
             ),
             actions: [
@@ -230,10 +267,11 @@ function EntryRow({
             ref={setNodeRef}
             style={style}
             className={classes.filter(Boolean).join(' ')}
+            data-entry={entry.id}
             aria-current={selected || undefined}
             onClick={(e) => {
                 // The whole row is a click target; its own buttons / inputs handle themselves.
-                if (!editing && !(e.target as HTMLElement).closest('button, input')) onSelect()
+                if (!editing && !(e.target as HTMLElement).closest('button, input')) onSelect(e.detail)
             }}
         >
             {reorderable && (
@@ -247,7 +285,20 @@ function EntryRow({
                     ⠿
                 </button>
             )}
-            <span className="entry-pos" title={reorderable ? undefined : position === null ? 'No result yet' : `Place ${position}`}>
+            <span
+                className={`entry-pos${typeof position === 'string' ? ' entry-pos-mark' : ''}`}
+                title={
+                    reorderable
+                        ? undefined
+                        : position === null
+                          ? 'No result yet'
+                          : typeof position === 'string'
+                            ? position === 'RET'
+                                ? 'Retired'
+                                : 'Eliminated'
+                            : `Place ${position}`
+                }
+            >
                 {position ?? '–'}
             </span>
             <div className="entry-body">
@@ -269,9 +320,10 @@ function EntryRow({
                     <>
                         <button
                             className="entry-name"
-                            onClick={onSelect}
+                            onClick={(e) => onSelect(e.detail)}
                             disabled={snap.pending.has('select')}
                             aria-pressed={selected}
+                            title={selected && !hasSession ? 'Click again to deselect' : undefined}
                         >
                             <span className="entry-name-text">{entry.name}</span>
                             {selected && <span className="selected-tag">SELECTED</span>}
@@ -290,7 +342,7 @@ function EntryRow({
                                     </span>
                                 ) : (
                                     <button
-                                        className={run.id === bestRunId ? 'chip chip-best' : 'chip'}
+                                        className={`chip${run.id === bestRunId ? ' chip-best' : ''}${run.outcome !== 'FINISHED' ? ' chip-unfinished' : ''}`}
                                         title={
                                             run.id === bestRunId
                                                 ? `Try ${run.number} — counts in the ranking; click to reopen or delete`
@@ -299,7 +351,7 @@ function EntryRow({
                                         disabled={snap.pending.has(`run:${run.id}`)}
                                         onClick={() => void runMenu(run)}
                                     >
-                                        {runChipText(run)}
+                                        {runText(run)}
                                     </button>
                                 )}
                             </li>

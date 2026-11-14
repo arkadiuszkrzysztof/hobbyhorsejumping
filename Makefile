@@ -92,7 +92,7 @@ coverage: $(COV_BINS)
 	@$(LLVM_PROFDATA) merge -sparse $(BUILD)/cov/*.profraw -o $(BUILD)/cov/all.profdata
 	@python3 $(ROOT)/hhj-common/tools/coverage.py "$(LLVM_COV)" $(BUILD)/cov/all.profdata $(ROOT) $(COV_BINS)
 
-# ONLY=stopwatch,display limits the run to headers whose name contains one of these.
+# ONLY=timer_app,display limits the run to headers whose name contains one of these.
 # MUT_JOBS=4 uses four parallel workers (default 2).
 mutation:
 	@$(NICE) python3 $(ROOT)/hhj-common/tools/mutate.py $(ROOT) $(BUILD)/mutation $(ONLY)
