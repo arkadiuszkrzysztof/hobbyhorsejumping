@@ -34,6 +34,7 @@ std::string reencode(const Msg& m) {
     case Msg::Kind::Event: return enc(m.event);
     case Msg::Kind::Hello: return enc(m.hello);
     case Msg::Kind::Ack:   return enc(m.ack);
+    case Msg::Kind::Show:  return enc(m.show);
     case Msg::Kind::None:  break;
   }
   return "";
@@ -564,11 +565,12 @@ TEST(fuzz_decode_is_safe_and_consistent) {
   hhj_test::Rng rng(99);
   const std::string seeds[] = {enc(event(Role::Start)), enc(event(Role::Finish)), enc(hello(Role::Start)),
                                enc(hello(Role::Timer)), enc(hello(Role::Backend)),
-                               "{\"ack\":\"START\",\"boot\":3735928559,\"seq\":7}"};
+                               "{\"ack\":\"START\",\"boot\":3735928559,\"seq\":7}",
+                               "{\"show\":\"RUN\",\"rev\":3141592653,\"age_ms\":4567,\"ms\":0}"};
   const int n = hhj_test::iterations(150000, 3000);
   int accepted = 0;
   for (int i = 0; i < n; i++) {
-    std::string s = seeds[rng.below(6)];
+    std::string s = seeds[rng.below(7)];
     const int edits = 1 + static_cast<int>(rng.below(3));
     for (int k = 0; k < edits && !s.empty(); k++) {
       const uint32_t at = rng.below(static_cast<uint32_t>(s.size()));
@@ -613,4 +615,88 @@ TEST(decode_overlong_fw_never_touches_memory_outside_the_message) {
   Msg ok;
   CHECK(dec("{\"hello\":\"TIMER\",\"boot\":5,\"fw\":\"" + std::string(15, 'a') + "\"}", &ok));
   CHECK_EQ(strlen(ok.hello.fw), 15);
+}
+
+// --------------------------------------------------------------------- SHOW
+TEST(show_names_round_trip) {
+  const Show all[] = {Show::Idle, Show::Ready, Show::Run, Show::Result};
+  for (Show v : all) {
+    const char* n = show_name(v);
+    CHECK(show_parse(n, strlen(n)) == v);
+  }
+  CHECK_STR(show_name(Show::Idle), "IDLE");
+  CHECK_STR(show_name(Show::Ready), "READY");
+  CHECK_STR(show_name(Show::Run), "RUN");
+  CHECK_STR(show_name(Show::Result), "RESULT");
+  CHECK_STR(show_name(Show::None), "");
+  CHECK(show_parse("", 0) == Show::None);
+  CHECK(show_parse("run", 3) == Show::None);
+  CHECK(show_parse("RUNS", 4) == Show::None);
+  CHECK(show_parse("RUN", 2) == Show::None);        // only the given length counts
+  CHECK(show_parse("RUNxx", 3) == Show::Run);
+  CHECK(Show{} == Show::None);
+}
+
+TEST(show_defaults_and_encode_refusals) {
+  const ShowMsg s;
+  CHECK(s.state == Show::None);
+  CHECK_EQ(s.rev, 0);
+  CHECK_EQ(s.age_ms, 0);
+  CHECK_EQ(s.ms, 0);
+  CHECK(enc(s).empty());                            // "show nothing" is not a message
+  char buf[8];
+  ShowMsg idle;
+  idle.state = Show::Idle;
+  CHECK_EQ(encode(idle, nullptr, 100), 0);
+  CHECK_EQ(encode(idle, buf, 0), 0);
+  CHECK_EQ(encode(idle, buf, sizeof(buf)), 0);      // does not fit
+  CHECK_STR(enc(idle), "{\"show\":\"IDLE\",\"rev\":0,\"age_ms\":0,\"ms\":0}");
+  ShowMsg big;
+  big.state = Show::Result; big.rev = 4294967295u; big.age_ms = 4294967295u; big.ms = 4294967295u;
+  CHECK(!enc(big).empty());
+  CHECK(enc(big).size() < 120);                     // the senders' buffers
+}
+
+TEST(decode_show_field_ranges_are_exact) {
+  for (const char* field : {"rev", "age_ms", "ms"}) {
+    auto with = [&](const char* value) { return std::string("{\"show\":\"RUN\",\"") + field + "\":" + value + "}"; };
+    CHECK(valid(with("0")));
+    CHECK(valid(with("4294967295")));
+    CHECK(!valid(with("-1")));
+    CHECK(!valid(with("4294967296")));
+    CHECK(!valid(with("\"1\"")));
+    CHECK(!valid(with("1.0")));
+    CHECK(!valid(with("null")));
+  }
+  Msg m;
+  CHECK(dec("{\"show\":\"READY\"}", &m));
+  CHECK(m.kind == Msg::Kind::Show);
+  CHECK(m.show.state == Show::Ready);
+  CHECK_EQ(m.show.rev, 0);
+  CHECK_EQ(m.show.age_ms, 0);
+  CHECK_EQ(m.show.ms, 0);
+  CHECK(!valid("{\"show\":\"RUN\",\"hello\":\"TIMER\",\"boot\":1}"));
+  CHECK(!valid("{\"show\":null}"));
+}
+
+TEST(round_trip_random_shows) {
+  hhj_test::Rng rng(4);
+  const Show states[] = {Show::Idle, Show::Ready, Show::Run, Show::Result};
+  const int n = hhj_test::iterations(20000, 500);
+  for (int i = 0; i < n; i++) {
+    ShowMsg s;
+    s.state = states[rng.below(4)];
+    s.rev = static_cast<uint32_t>(rng.next());
+    s.age_ms = rng.chance(0.1) ? 4294967295u : static_cast<uint32_t>(rng.next());
+    s.ms = static_cast<uint32_t>(rng.next());
+    const std::string text = enc(s);
+    Msg m;
+    CHECK(dec(text, &m));
+    CHECK(m.kind == Msg::Kind::Show);
+    CHECK(m.show.state == s.state);
+    CHECK_EQ(m.show.rev, s.rev);
+    CHECK_EQ(m.show.age_ms, s.age_ms);
+    CHECK_EQ(m.show.ms, s.ms);
+    CHECK_STR(enc(m.show), text);
+  }
 }

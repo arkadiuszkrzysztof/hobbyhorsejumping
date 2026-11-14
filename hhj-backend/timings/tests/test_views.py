@@ -30,7 +30,7 @@ class TimeReadingListGetTests(TestCase):
         self.assertEqual(len(data), 100)
         self.assertEqual(data[0]['server_time'], T0 + 1004)  # latest first
         self.assertEqual(data[1]['server_time'], T0 + 1003)
-        expected = {'id', 'competition_start', 'time_mark', 'sensor_time', 'server_time', 'gate_boot',
+        expected = {'id', 'run', 'competition_start', 'time_mark', 'sensor_time', 'server_time', 'gate_boot',
                     'gate_seq', 'gate_time', 'direction', 'gap_ms', 'copies', 'source'}
         self.assertEqual(set(data[0]), expected)
 

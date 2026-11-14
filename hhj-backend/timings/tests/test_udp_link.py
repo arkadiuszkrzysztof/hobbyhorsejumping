@@ -19,7 +19,9 @@ class LinkServerTests(TransactionTestCase):
         self.publish = patcher.start()
         self.addCleanup(patcher.stop)
         self.registry = DeviceRegistry()
-        self.server = LinkServer(LOCAL, 0, registry=self.registry).start()
+        # drive_displays=False: these tests are about the gate side of the link; the
+        # display side (SHOW datagrams to timers) has its own tests in test_display.py
+        self.server = LinkServer(LOCAL, 0, registry=self.registry, drive_displays=False).start()
         self.addCleanup(self.server.stop)
         self.client = Client(self.server.port)
         self.addCleanup(self.client.close)

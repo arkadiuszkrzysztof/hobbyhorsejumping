@@ -900,3 +900,182 @@ TEST(t11_result_log_shows_seconds_and_hundredths) {
   r.run(1);                                       // 61.050 s
   CHECK(r.timer.hal.logged("FINISH (console) -> RESULT 61.05 s"));
 }
+
+// ------------------------------------------------ T-12 the backend's display
+namespace {
+
+// A pretend backend at 192.168.10.30 that tells the timer what to show.
+struct Director {
+  Rig& r;
+  sim::Probe node;
+  explicit Director(Rig& rig) : r(rig), node(rig.w, ip(30)) { node.join(); }
+  void say(Show state, uint32_t rev = 0, uint32_t age_ms = 0, uint32_t ms = 0) {
+    ShowMsg s;
+    s.state = state;
+    s.rev = rev;
+    s.age_ms = age_ms;
+    s.ms = ms;
+    char buf[120];
+    const size_t n = encode(s, buf, sizeof(buf));
+    node.say(ip(20), std::string(buf, n));
+  }
+};
+
+}  // namespace
+
+TEST(t12_backend_takes_the_display_over_and_hands_it_back) {
+  Rig r;
+  Director d(r);
+  r.run_until(2000);
+  CHECK(!r.timer.app.remote().active(r.w.t));
+  d.say(Show::Ready);
+  r.run(2);                                       // arrives at 2001
+  CHECK(r.timer.app.remote().active(r.w.t));
+  CHECK_STR(r.text(), " 000");                    // 0.00: a rider is about to start
+  CHECK_EQ(r.timer.hal.count_logged("backend took over the display"), 1);
+  r.run_until(2001 + 5000);
+  CHECK_STR(r.text(), " 000");                    // 5000 ms after the last SHOW: still the backend's
+  r.run(1);
+  CHECK_STR(r.text(), "____");                    // 5001 ms: back to the own (idle) picture
+  CHECK_EQ(r.timer.hal.count_logged("backend silent -> showing the own stopwatch"), 1);
+  d.say(Show::Ready);
+  r.run(2);
+  CHECK_EQ(r.timer.hal.count_logged("backend took over the display"), 2);
+}
+
+TEST(t12_gate_crossings_are_not_shown_while_the_backend_decides) {
+  // Kids run through the gates between sessions: the display must not start counting.
+  Rig r;
+  Director d(r);
+  r.run_until(2000);
+  r.hello(Role::Start);
+  r.hello(Role::Finish);
+  for (int64_t t = 2000; t < 12000; t += 1000) {
+    r.run_until(t);
+    d.say(Show::Idle);
+    if (t == 4000) r.event(Role::Start, 1, 4000);
+    if (t == 7000) r.event(Role::Finish, 1, 7000);
+    if (t % 2000 == 0) {
+      r.hello(Role::Start);
+      r.hello(Role::Finish);
+    }
+    r.run(500);
+    CHECK_STR(r.text(), "----");                  // the idle picture throughout
+  }
+  // ...but the own stopwatch did follow them, ready to take over
+  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Finished);
+  r.run_until(11000 + 5010);
+  CHECK_STR(r.text(), " 300");                    // backend silent: the own result (7001 - 4001) shows
+}
+
+TEST(t12_running_clock_from_the_backend) {
+  Rig r;
+  Director d(r);
+  r.run_until(10000);
+  d.say(Show::Run, 77, 4000);                     // the counting START was cut 4 s ago; arrives at 10001
+  r.run(2);
+  CHECK_STR(r.text(), " 400");
+  for (int64_t t = 11000; t <= 18000; t += 1000) {          // the backend repeats it every second
+    r.run_until(t);
+    d.say(Show::Run, 77, static_cast<uint32_t>(t - 6000));
+  }
+  r.run_until(6001 + 12340);
+  CHECK_STR(r.text(), "1234");                    // 12.34 s after the START as the timer placed it (6001)
+  CHECK(r.timer.app.stopwatch().state() == Stopwatch::State::Idle);   // the own stopwatch saw no gate event
+}
+
+TEST(t12_copies_refine_the_backend_clock) {
+  Rig r;
+  Director d(r);
+  r.run_until(10000);
+  r.w.net.unicast_min_ms = r.w.net.unicast_max_ms = 41;     // the first copy is 41 ms late
+  d.say(Show::Run, 5, 1000);                      // true start: 9000
+  r.w.net.unicast_min_ms = r.w.net.unicast_max_ms = 1;
+  r.run_until(10100);
+  CHECK_EQ(r.timer.app.remote().shown_ms(10100), 1059);     // start estimated 9041
+  d.say(Show::Run, 5, 1100);                      // 1 ms on the wire: start 9001
+  r.run_until(10200);
+  CHECK_EQ(r.timer.app.remote().shown_ms(10200), 1199);
+}
+
+TEST(t12_operator_picks_another_start_and_the_clock_jumps) {
+  Rig r;
+  Director d(r);
+  r.run_until(10000);
+  d.say(Show::Run, 1, 6000);                      // first START counts: 6 s on the clock
+  r.run(2);
+  CHECK_STR(r.text(), " 600");
+  d.say(Show::Run, 2, 2000);                      // the operator picked a later START: 2 s
+  r.run(2);
+  CHECK_STR(r.text(), " 200");
+}
+
+TEST(t12_result_from_the_backend_blinks_then_stays) {
+  Rig r;
+  Director d(r);
+  r.run_until(10000);
+  d.say(Show::Result, 9, 0, 23450);               // arrives at 10001
+  for (int64_t since = 1; since < 3000; since++) {
+    r.run_until(10001 + since);
+    const bool off = (since / 300) % 2 == 1;
+    CHECK_STR(r.text(), off ? "    " : "2345");
+    if (since % 1000 == 0) d.say(Show::Result, 9, 0, 23450);   // the 1 Hz repeats do not restart the blinking
+  }
+  r.run_until(10001 + 3000);
+  CHECK_STR(r.text(), "2345");
+  // the operator picks another FINISH: new result, blinking again
+  d.say(Show::Result, 10, 0, 21000);
+  r.run_until(13002 + 299);
+  CHECK_STR(r.text(), "2100");
+  r.run_until(13002 + 300);
+  CHECK_STR(r.text(), "    ");
+}
+
+TEST(t12_idle_from_the_backend_shows_gate_status_and_no_wifi_still_blinks) {
+  Rig r;
+  Director d(r);
+  r.run_until(2000);
+  d.say(Show::Idle);
+  r.hello(Role::Start);
+  r.run(5);
+  CHECK_STR(r.text(), "--__");
+  r.w.ap[0] = false;                              // WiFi drops; the last SHOW still counts for 5 s
+  r.run_until(2600);
+  CHECK(r.timer.app.remote().active(r.w.t));
+  CHECK_STR(r.text(), "    ");                    // 2600 / 500 = 5: the "no WiFi" blink, off phase
+  r.run_until(3100);
+  CHECK_STR(r.text(), "----");
+}
+
+TEST(t12_hello_reports_what_is_shown) {
+  Rig r;
+  Director d(r);
+  auto last_hello = [&] {
+    Msg m, out;
+    for (const sim::Datagram& dg : r.start_gate.heard) {
+      if (decode(dg.data.data(), dg.data.size(), &m) && m.kind == Msg::Kind::Hello) out = m;
+    }
+    return out.hello;
+  };
+  r.run_until(3900);
+  d.say(Show::Run, 1, 1000);                      // arrives 3901: start 2901
+  r.run_until(4100);                              // HELLO at 4051
+  CHECK_EQ(last_hello().st, kStRunning);
+  CHECK_EQ(last_hello().ms, 1150);
+  d.say(Show::Result, 2, 0, 9870);
+  r.run_until(6100);
+  CHECK_EQ(last_hello().st, kStFinished);
+  CHECK_EQ(last_hello().ms, 9870);
+  d.say(Show::Ready);
+  r.run_until(8100);
+  CHECK_EQ(last_hello().st, kStIdle);
+  CHECK_EQ(last_hello().ms, 0);
+  d.say(Show::Idle, 3, 500, 600);                 // idle: whatever else the datagram carries
+  r.run_until(10100);
+  CHECK_EQ(last_hello().st, kStIdle);
+  CHECK_EQ(last_hello().ms, 0);
+}
+
+TEST(t12_default_remote_timeout) {
+  CHECK_EQ(TimerAppConfig{}.remote.timeout_ms, 5000);
+}

@@ -26,6 +26,11 @@
 //        one line the first time an event is ignored. Further copies of an
 //        event are silent (a gate repeats an unconfirmed event every second
 //        for minutes).
+//   T-12 While a backend sends SHOW datagrams the display shows what they say
+//        (remote.h): 0.00, the running clock, the result (blinking like T-5),
+//        or the idle picture (T-2 / T-3). The gates' events still feed the
+//        own stopwatch, which takes the display back when the backend falls
+//        silent. Taking over and handing back are logged.
 //
 // Host tests: test/test_timer_app.cpp and hhj-common/test/test_system.cpp
 #pragma once
@@ -36,6 +41,7 @@
 #include "display.h"
 #include "hhj/link.h"
 #include "hhj/net.h"
+#include "remote.h"
 #include "stopwatch.h"
 
 namespace hhj {
@@ -57,6 +63,7 @@ struct TimerAppConfig {
   Segments segments{};                 // wiring: which bit drives which segment
   bool chain_first_is_left = true;     // wiring: first chip in the chain = left digit
   StopwatchConfig stopwatch;
+  RemoteConfig remote;
   WifiPlanConfig wifi;
   uint32_t hello_ms = kHelloPeriodMs;
   uint32_t peer_ttl_ms = kPeerTtlMs;
@@ -71,7 +78,7 @@ struct TimerAppConfig {
 class TimerApp {
  public:
   TimerApp(TimerHal& hal, const TimerAppConfig& cfg)
-      : hal_(hal), cfg_(cfg), sw_(cfg.stopwatch), uplink_(hal, cfg.wifi) {}
+      : hal_(hal), cfg_(cfg), sw_(cfg.stopwatch), remote_(cfg.remote), uplink_(hal, cfg.wifi) {}
 
   void begin() {
     t_boot_ = hal_.now_ms();
@@ -87,6 +94,11 @@ class TimerApp {
     network(now);
     if (sw_.tick(now)) logf(hal_, now, "no FINISH for %lu ms -> back to ready",
                             static_cast<unsigned long>(cfg_.stopwatch.run_timeout_ms));
+    const bool remote_now = remote_.active(now);                                                  // T-12
+    if (remote_now != was_remote_) {
+      logf(hal_, now, remote_now ? "backend took over the display" : "backend silent -> showing the own stopwatch");
+      was_remote_ = remote_now;
+    }
     const Frame f = render(now);
     if (!shown_valid_ || f != shown_ || now - t_shown_ >= static_cast<int64_t>(cfg_.refresh_ms)) {   // T-6
       uint8_t chain[4];
@@ -98,18 +110,45 @@ class TimerApp {
     }
   }
 
+  // What is on the display, whoever decides it.
+  enum class View : uint8_t { Idle, Ready, Running, Result };
+  struct Shown {
+    View view;
+    int64_t ms;            // Running: the clock; Result: the time; otherwise 0
+    int64_t since_ms;      // Result: when it appeared (for the blinking)
+    explicit Shown(View v, int64_t time_ms = 0, int64_t since = 0) : view(v), ms(time_ms), since_ms(since) {}
+  };
+
+  Shown shown(int64_t now) const {
+    if (remote_.active(now)) {                                                                    // T-12
+      switch (remote_.state()) {
+        case Show::Run:    return Shown(View::Running, remote_.shown_ms(now));
+        case Show::Result: return Shown(View::Result, remote_.shown_ms(now), remote_.result_since_ms());
+        case Show::Ready:  return Shown(View::Ready);
+        default:           return Shown(View::Idle);
+      }
+    }
+    switch (sw_.state()) {
+      case Stopwatch::State::Running:  return Shown(View::Running, sw_.shown_ms(now));            // T-4
+      case Stopwatch::State::Finished: return Shown(View::Result, sw_.shown_ms(now), sw_.finished_at_ms());
+      default:                         return Shown(View::Idle);
+    }
+  }
+
   // What the digits should show right now.
   Frame render(int64_t now) const {
     const Segments& s = cfg_.segments;
     if (now - t_boot_ < static_cast<int64_t>(cfg_.selftest_ms) || now < lamp_until_) {            // T-1
       return frame_fill(glyph_digit(s, 8));
     }
-    switch (sw_.state()) {
-      case Stopwatch::State::Running:                                                             // T-4
-        return frame_time(s, sw_.shown_ms(now));
-      case Stopwatch::State::Finished:                                                            // T-5
-        return result_blanked(now) ? frame_fill(kBlank) : frame_time(s, sw_.shown_ms(now));
-      case Stopwatch::State::Idle:
+    const Shown v = shown(now);
+    switch (v.view) {
+      case View::Running:
+      case View::Ready:
+        return frame_time(s, v.ms);
+      case View::Result:                                                                          // T-5
+        return result_blanked(now - v.since_ms) ? frame_fill(kBlank) : frame_time(s, v.ms);
+      case View::Idle:
         break;
     }
     if (!uplink_.up()) {                                                                          // T-2
@@ -123,6 +162,7 @@ class TimerApp {
 
   const Stopwatch& stopwatch() const { return sw_; }
   const Uplink& uplink() const { return uplink_; }
+  const RemoteDisplay& remote() const { return remote_; }
   bool gate_online(Role mark, int64_t now) const { return online(mark == Role::Start ? start_gate_ : finish_gate_, now); }
   uint32_t rx_invalid() const { return rx_invalid_; }
   uint32_t tx_failed() const { return tx_failed_; }
@@ -137,9 +177,8 @@ class TimerApp {
     uint32_t st = 0;
   };
 
-  // The "off" half of the blinking that announces a fresh result.
-  bool result_blanked(int64_t now) const {
-    const int64_t since = now - sw_.finished_at_ms();
+  // The "off" half of the blinking that announces a fresh result; `since` = how long it has been shown.
+  bool result_blanked(int64_t since) const {
     return since < static_cast<int64_t>(cfg_.result_blink_ms) && cfg_.result_blink_half_ms != 0 &&
            (since / cfg_.result_blink_half_ms) % 2 == 1;
   }
@@ -202,6 +241,8 @@ class TimerApp {
                    static_cast<unsigned long>(e.age_ms));
           report(now, what, o);
         }
+      } else if (m.kind == Msg::Kind::Show) {
+        remote_.on_show(m.show, now);                                                             // T-12
       } else if (m.kind == Msg::Kind::Hello && is_gate(m.hello.role)) {
         GateSeen& g = m.hello.role == Role::Start ? start_gate_ : finish_gate_;
         if (!online(g, now)) logf(hal_, now, "%s gate online", role_name(m.hello.role));
@@ -262,12 +303,9 @@ class TimerApp {
     h.boot = cfg_.boot;
     h.up_ms = now;
     snprintf(h.fw, sizeof(h.fw), "%s", cfg_.fw);
-    switch (sw_.state()) {
-      case Stopwatch::State::Idle:     h.st = kStIdle; break;
-      case Stopwatch::State::Running:  h.st = kStRunning; break;
-      case Stopwatch::State::Finished: h.st = kStFinished; break;
-    }
-    h.ms = clamp_u32(sw_.shown_ms(now));
+    const Shown v = shown(now);
+    h.st = v.view == View::Running ? kStRunning : (v.view == View::Result ? kStFinished : kStIdle);
+    h.ms = clamp_u32(v.ms);
     h.rssi = clamp_rssi(hal_.rssi());
     h.net = uplink_.net() == WifiPlan::Net::Fallback ? 1 : 0;
     char buf[200];
@@ -286,9 +324,11 @@ class TimerApp {
   TimerHal& hal_;
   TimerAppConfig cfg_;
   Stopwatch sw_;
+  RemoteDisplay remote_;
   Uplink uplink_;
 
   bool begun_ = false;
+  bool was_remote_ = false;
   int64_t t_boot_ = 0;
   int64_t lamp_until_ = 0;
   int64_t next_hello_ms_ = 0;

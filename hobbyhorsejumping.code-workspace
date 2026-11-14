@@ -48,6 +48,7 @@
       },
       { "label": "HHJ: test firmware logic (host)", "type": "shell", "command": "make test-firmware", "group": "test", "problemMatcher": ["$gcc"] },
       { "label": "HHJ: test backend", "type": "shell", "command": "make test-backend", "group": "test" },
+      { "label": "HHJ: test frontend", "type": "shell", "command": "make test-frontend", "group": "test" },
       { "label": "HHJ: test gate <-> backend link", "type": "shell", "command": "make test-link", "group": "test" },
       { "label": "HHJ: coverage of firmware logic", "type": "shell", "command": "make coverage", "group": "test" },
       { "label": "HHJ: mutation test (slow)", "type": "shell", "command": "make mutation", "group": "test" },
@@ -67,10 +68,11 @@
       { "label": "HHJ: serial monitor - timer", "type": "shell", "command": "make monitor-timer", "isBackground": true },
 
       { "label": "HHJ: run backend (HTTP 3003 + UDP 3004)", "type": "shell", "command": "make backend", "isBackground": true },
-      { "label": "HHJ: run frontend", "type": "shell", "command": "make frontend", "isBackground": true },
+      { "label": "HHJ: run frontend (operator console, http://localhost:3000)", "type": "shell", "command": "make frontend", "isBackground": true },
+      { "label": "HHJ: build frontend (type-check + bundle)", "type": "shell", "command": "make frontend-build", "group": "build" },
       {
         "label": "HHJ: run backend + frontend",
-        "dependsOn": ["HHJ: run backend (HTTP 3003 + UDP 3004)", "HHJ: run frontend"],
+        "dependsOn": ["HHJ: run backend (HTTP 3003 + UDP 3004)", "HHJ: run frontend (operator console, http://localhost:3000)"],
         "dependsOrder": "parallel"
       },
       {
@@ -84,6 +86,12 @@
         "type": "shell",
         "command": "make sim && ./build/hhj-gate-sim gate --mode FINISH --peer 127.0.0.1:3004 --cross 300",
         "detail": "Needs the backend running on this machine."
+      },
+      {
+        "label": "HHJ: simulate the display for a minute (no hardware)",
+        "type": "shell",
+        "command": "make sim && ./build/hhj-gate-sim timer --peer 127.0.0.1:3004 --run 60000",
+        "detail": "Prints what the 4 digits would show. Needs the backend running on this machine."
       }
     ]
   }

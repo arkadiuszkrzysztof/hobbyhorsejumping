@@ -12,7 +12,9 @@ EVENT_FIELDS = {'mark': 'mark', 'age_ms': 'age_ms', 't': 't', 'boot': 'boot', 's
 HELLO_FIELDS = {'role': 'role', 'boot': 'boot', 'up_ms': 'up_ms', 'fw': 'fw', 'st': 'st', 'seq': 'seq',
                 'pending': 'pending', 'ms': 'ms', 'rssi': 'rssi', 'net': 'net'}
 ACK_FIELDS = {'mark': 'mark', 'boot': 'boot', 'seq': 'seq'}
-KINDS = {'event': (link.Event, EVENT_FIELDS), 'hello': (link.Hello, HELLO_FIELDS), 'ack': (link.Ack, ACK_FIELDS)}
+SHOW_FIELDS = {'state': 'state', 'rev': 'rev', 'age_ms': 'age_ms', 'ms': 'ms'}
+KINDS = {'event': (link.Event, EVENT_FIELDS), 'hello': (link.Hello, HELLO_FIELDS), 'ack': (link.Ack, ACK_FIELDS),
+         'show': (link.Show, SHOW_FIELDS)}
 
 
 def load_vectors():
@@ -36,7 +38,7 @@ def parse_expect(expect):
     values = {}
     for key, raw in pairs.items():
         attr = fields[key]
-        if attr in ('mark', 'role'):
+        if attr in ('mark', 'role', 'state'):
             values[attr] = raw
         elif attr == 'fw':
             values[attr] = None if raw == '-' else raw

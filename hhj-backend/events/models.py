@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.utils import timezone
 
 class HobbyHorse(models.Model):
   id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -91,16 +92,27 @@ class Course(models.Model):
     return self.name
 
 class Competition(models.Model):
+  """The master record of one competition.
+
+  Only the name is needed to run one from the operator console (hhj-frontend);
+  event, course, judges ... are optional paperwork that can be filled in here
+  in the admin. Its competitors are the CompetitionStart rows (`starts`), in
+  `starting_order`; each of them can have several timings.Run.
+  """
   id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
   name = models.CharField(max_length=100)
-  event = models.ForeignKey('Event', on_delete=models.CASCADE)
-  start_date_time = models.DateTimeField()
-  arena_size = models.CharField(max_length=100)
-  height_class = models.CharField(max_length=100)
-  time_limit = models.IntegerField()
+  event = models.ForeignKey('Event', on_delete=models.CASCADE, null=True, blank=True)
+  start_date_time = models.DateTimeField(default=timezone.now)
+  arena_size = models.CharField(max_length=100, blank=True, default='')
+  height_class = models.CharField(max_length=100, blank=True, default='')
+  time_limit = models.IntegerField(null=True, blank=True)
   description = models.TextField(null=True, blank=True)
-  course = models.ForeignKey(Course, on_delete=models.DO_NOTHING)
-  judges = models.ManyToManyField(Judge)
+  course = models.ForeignKey(Course, on_delete=models.SET_NULL, null=True, blank=True)
+  judges = models.ManyToManyField(Judge, blank=True)
+  # operator console
+  fence_count = models.PositiveSmallIntegerField(default=12)
+  selected_start = models.ForeignKey('CompetitionStart', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='+')
 
   class Meta:
     ordering = ['-start_date_time']

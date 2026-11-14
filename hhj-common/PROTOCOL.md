@@ -18,12 +18,12 @@ file, `hhj-common/protocol/vectors.tsv`.
   written: a JSON escape sequence in any of them (`"\u0053TART"`) makes the
   datagram invalid. Escapes are tolerated only inside the string value of an
   unknown key. Bytes above 0x7F may only appear inside strings.
-- Unknown keys are ignored. A datagram that is not exactly one of the three
+- Unknown keys are ignored. A datagram that is not exactly one of the four
   kinds below, or that has a missing / mistyped / out-of-range required field,
   or a duplicated key, is dropped as a whole.
 
 The kind is decided by which of these keys is present (exactly one must be):
-`time_mark` → EVENT, `hello` → HELLO, `ack` → ACK.
+`time_mark` → EVENT, `hello` → HELLO, `ack` → ACK, `show` → SHOW.
 
 ## Roles
 
@@ -137,6 +137,35 @@ Sent by the backend, unicast to the source address and port of the EVENT
 datagram, for every copy it receives — but only after the reading is in the
 database. Gates ignore ACKs whose `ack`/`boot` are not their own.
 
+## SHOW — the backend tells the display what to show
+
+```json
+{"show":"RUN","rev":3141592653,"age_ms":4567,"ms":0}
+{"show":"RESULT","rev":2718281828,"age_ms":0,"ms":23450}
+```
+
+| key      | type                             | required | meaning                                                   |
+|----------|----------------------------------|----------|-----------------------------------------------------------|
+| `show`   | `IDLE`/`READY`/`RUN`/`RESULT`    | yes      | what the display should show                              |
+| `rev`    | 0..4294967295                    | no (0)   | identifies what is being timed: it changes when the run, or the START / FINISH that counts for it, changes |
+| `age_ms` | 0..4294967295                    | no (0)   | `RUN`: how long ago the counting START was cut, measured when this datagram was sent |
+| `ms`     | 0..4294967295                    | no (0)   | `RESULT`: the time to show                                |
+
+The operator decides at the backend which rider is being timed and which
+START and FINISH count, so with a backend present the display follows the
+backend instead of the gates:
+
+- The backend sends a SHOW, unicast, to every `TIMER` it knows: once a second,
+  and at once when what should be shown changes.
+- While SHOWs arrive the timer shows what they say. It keeps listening to the
+  gates, but only to be able to carry on alone: after 5 s without a SHOW it
+  goes back to its own stopwatch.
+- `IDLE`: the idle picture (gate status). `READY`: `0.00` — a rider is about to
+  start. `RUN`: the clock, running from `time_of_arrival - age_ms`; over the
+  copies with the same `rev` the smallest such value is kept, a different
+  `rev` starts afresh. `RESULT`: `ms` as given; it blinks when it appears or
+  changes.
+
 ## Conformance file
 
 `protocol/vectors.tsv` — tab-separated, `#` starts a comment line:
@@ -148,7 +177,7 @@ verdict <TAB> canon <TAB> expect <TAB> payload
 - `verdict`: `ok` (must decode) or `bad` (must be rejected).
 - `canon`: `c` if `payload` is byte-for-byte what the encoders must produce for
   the fields in `expect`, otherwise `-`.
-- `expect`: space-separated `key=value`; `kind=event|hello|ack` first. Absent
+- `expect`: space-separated `key=value`; `kind=event|hello|ack|show` first. Absent
   optional fields appear with their default (`0`, and `fw=-` for no version).
   `-` for `bad` lines.
 - `payload`: the datagram, verbatim to the end of the line.

@@ -6,7 +6,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 from django.db.models import F
 
-from . import live
+from . import arena, live
 from .link import Event
 from .models import TimeReading
 
@@ -58,11 +58,14 @@ def ingest_event(ev: Event, recv_epoch_ms: int, source_ip: str = ''):
             except IntegrityError:
                 continue  # another writer created it first: count as a copy
             _publish_on_commit(reading)
+            arena.on_reading(reading, created=True)
             return reading, True
         with transaction.atomic():
             TimeReading.objects.filter(pk=existing.pk).update(copies=F('copies') + 1)
-            TimeReading.objects.filter(pk=existing.pk, sensor_time__gt=edge).update(sensor_time=edge)
-        return TimeReading.objects.get(pk=existing.pk), False
+            lowered = TimeReading.objects.filter(pk=existing.pk, sensor_time__gt=edge).update(sensor_time=edge)
+        reading = TimeReading.objects.get(pk=existing.pk)
+        arena.on_reading(reading, created=False, lowered=bool(lowered))
+        return reading, False
     raise RuntimeError('could not store event %r' % (ev,))
 
 
@@ -83,4 +86,5 @@ def ingest_legacy(time_mark, sensor_time=None, age_ms=None, source='http'):
         source=(source or '')[:45],
     )
     _publish_on_commit(reading)
+    arena.on_reading(reading, created=True)
     return reading

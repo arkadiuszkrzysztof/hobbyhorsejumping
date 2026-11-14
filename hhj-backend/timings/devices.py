@@ -13,7 +13,7 @@ class DeviceRegistry:
         self._lock = threading.Lock()
         self._nodes = {}
 
-    def seen(self, hello: Hello, ip: str, now=None):
+    def seen(self, hello: Hello, ip: str, port=None, now=None):
         now = self._clock() if now is None else now
         key = (hello.role, ip)
         with self._lock:
@@ -23,8 +23,16 @@ class DeviceRegistry:
             elif node['hello'].boot != hello.boot:
                 node['reboots'] += 1
             node['hello'] = hello
+            node['port'] = port
             node['last_seen'] = now
             node['hellos'] += 1
+
+    def addresses(self, role, now=None):
+        """(ip, port) of every online node of that role (to send it something)."""
+        now = self._clock() if now is None else now
+        with self._lock:
+            return [(ip, node['port']) for (r, ip), node in sorted(self._nodes.items())
+                    if r == role and node['port'] and now - node['last_seen'] < ONLINE_S]
 
     def clear(self):
         with self._lock:

@@ -19,7 +19,7 @@ import time
 
 from django.db import close_old_connections, connection
 
-from . import link
+from . import link, live
 from .devices import registry as default_registry
 
 log = logging.getLogger(__name__)
@@ -29,8 +29,11 @@ PROCESS_BOOT = secrets.randbits(32)  # per-process boot nonce
 _PROCESS_T0 = time.monotonic()
 
 STAT_KEYS = ('datagrams', 'events', 'duplicates', 'hellos', 'acks_sent',
-             'invalid', 'stale', 'ignored', 'errors', 'dropped')
+             'invalid', 'stale', 'ignored', 'errors', 'dropped', 'shows_sent')
 QUEUE_MAX = 2000  # stamped datagrams waiting for the worker; beyond this they are dropped
+SHOW_PERIOD_S = 1.0     # how often every TIMER is told what to show (PROTOCOL.md, SHOW)
+DEVICES_PERIOD_S = 2.0  # how often the consoles get gate / timer status
+KICK = object()         # queue item: "what the display should show has changed"
 
 
 def backend_hello() -> bytes:
@@ -39,8 +42,9 @@ def backend_hello() -> bytes:
 
 
 class LinkServer:
-    def __init__(self, host='0.0.0.0', port=3004, registry=None):
+    def __init__(self, host='0.0.0.0', port=3004, registry=None, drive_displays=True):
         self.host = host
+        self.drive_displays = drive_displays
         self.requested_port = port
         self.port = None
         self.registry = registry if registry is not None else default_registry
@@ -119,7 +123,15 @@ class LinkServer:
             except queue.Full:
                 self.stats['dropped'] += 1
 
+    def kick(self):
+        """What the display should show has changed: send it now, not at the next tick."""
+        try:
+            self._queue.put_nowait(KICK)
+        except queue.Full:
+            pass
+
     def _work(self):
+        next_show = next_devices = 0.0
         try:
             while True:
                 try:
@@ -127,17 +139,48 @@ class LinkServer:
                 except queue.Empty:
                     if self._stop.is_set():
                         break
-                    continue
+                    item = False                      # nothing arrived: just the periodic work
                 if item is None:
                     break
-                data, addr, recv_ns = item
+                if item is KICK:
+                    next_show = 0.0
+                elif item:
+                    data, addr, recv_ns = item
+                    try:
+                        self._handle(data, addr, recv_ns)
+                    except Exception:
+                        self.stats['errors'] += 1
+                        log.exception('HHJ link: failed to handle datagram from %s', addr)
+                if not self.drive_displays:
+                    continue
+                now = time.monotonic()
                 try:
-                    self._handle(data, addr, recv_ns)
+                    if now >= next_show:
+                        next_show = now + SHOW_PERIOD_S
+                        self._show()
+                    if now >= next_devices:
+                        next_devices = now + DEVICES_PERIOD_S
+                        live.publish_devices()
                 except Exception:
                     self.stats['errors'] += 1
-                    log.exception('HHJ link: failed to handle datagram from %s', addr)
+                    log.exception('HHJ link: periodic work failed')
         finally:
             connection.close()
+
+    def _show(self):
+        """Tell every timer what to show (arena.display)."""
+        targets = self.registry.addresses('TIMER')
+        if not targets:
+            return
+        from . import arena
+        close_old_connections()
+        try:
+            payload = link.encode_show(arena.display())
+        finally:
+            close_old_connections()
+        for addr in targets:
+            if self._send(payload, addr):
+                self.stats['shows_sent'] += 1
 
     def _send(self, payload, addr):
         try:
@@ -158,10 +201,13 @@ class LinkServer:
                 self.stats['ignored'] += 1
                 return
             self.stats['hellos'] += 1
-            self.registry.seen(msg, addr[0])
+            new_timer = msg.role == 'TIMER' and addr not in self.registry.addresses('TIMER')
+            self.registry.seen(msg, addr[0], addr[1])
             self._send(backend_hello(), addr)
+            if new_timer:
+                self.kick()                           # a display appeared: tell it what to show at once
             return
-        if isinstance(msg, link.Ack):
+        if isinstance(msg, (link.Ack, link.Show)):
             self.stats['ignored'] += 1
             return
 
@@ -187,6 +233,13 @@ _server_lock = threading.Lock()
 
 def get_server():
     return _server
+
+
+def kick_display():
+    """Called after every change of state: the running server (if any) updates the displays."""
+    server = get_server()
+    if server is not None:
+        server.kick()
 
 
 def start_server(host='0.0.0.0', port=3004):

@@ -94,12 +94,43 @@ struct AckMsg {
   uint32_t seq = 0;
 };
 
+// What the backend wants the display to show.
+enum class Show : uint8_t { None = 0, Idle, Ready, Run, Result };
+
+inline const char* show_name(Show s) {
+  switch (s) {
+    case Show::Idle:   return "IDLE";
+    case Show::Ready:  return "READY";
+    case Show::Run:    return "RUN";
+    case Show::Result: return "RESULT";
+    case Show::None:   break;
+  }
+  return "";
+}
+
+inline Show show_parse(const char* s, size_t n) {
+  const Show all[] = {Show::Idle, Show::Ready, Show::Run, Show::Result};
+  for (Show v : all) {
+    const char* name = show_name(v);
+    if (strlen(name) == n && memcmp(name, s, n) == 0) return v;
+  }
+  return Show::None;
+}
+
+struct ShowMsg {
+  Show state = Show::None;
+  uint32_t rev = 0;         // identifies what is being timed
+  uint32_t age_ms = 0;      // Run: how long ago the counting START was cut, at the moment of sending
+  uint32_t ms = 0;          // Result: the time to show
+};
+
 struct Msg {
-  enum class Kind : uint8_t { None, Event, Hello, Ack };
+  enum class Kind : uint8_t { None, Event, Hello, Ack, Show };
   Kind kind = Kind::None;
   EventMsg event;
   HelloMsg hello;
   AckMsg ack;
+  ShowMsg show;
 };
 
 inline bool fw_valid(const char* fw) {
@@ -198,6 +229,14 @@ inline size_t encode(const AckMsg& a, char* buf, size_t cap) {
   return detail::finish(w, cap);
 }
 
+inline size_t encode(const ShowMsg& s, char* buf, size_t cap) {
+  if (buf == nullptr) return 0;
+  if (s.state == Show::None) return 0;
+  return detail::finish(snprintf(buf, cap, "{\"show\":\"%s\",\"rev\":%lu,\"age_ms\":%lu,\"ms\":%lu}",
+      show_name(s.state), static_cast<unsigned long>(s.rev), static_cast<unsigned long>(s.age_ms),
+      static_cast<unsigned long>(s.ms)), cap);
+}
+
 // ---------------------------------------------------------------- decode
 // True if `data[0..len)` is a valid datagram; `*out` then holds it.
 // On failure `out->kind` is Kind::None.
@@ -214,7 +253,27 @@ inline bool decode(const char* data, size_t len, Msg* out) {
   const bool is_event = j.has("time_mark");
   const bool is_hello = j.has("hello");
   const bool is_ack = j.has("ack");
-  if ((is_event ? 1 : 0) + (is_hello ? 1 : 0) + (is_ack ? 1 : 0) != 1) return false;
+  const bool is_show = j.has("show");
+  if ((is_event ? 1 : 0) + (is_hello ? 1 : 0) + (is_ack ? 1 : 0) + (is_show ? 1 : 0) != 1) return false;
+
+  if (is_show) {
+    ShowMsg s;
+    const char* p = nullptr;
+    size_t n = 0;
+    int64_t rev = 0, age = 0, ms = 0;                // optional: these are the defaults
+    if (!j.get_token("show", &p, &n)) return false;
+    s.state = show_parse(p, n);
+    if (s.state == Show::None) return false;
+    if (!opt_int(j, "rev", 0, kU32Max, &rev)) return false;
+    if (!opt_int(j, "age_ms", 0, kU32Max, &age)) return false;
+    if (!opt_int(j, "ms", 0, kU32Max, &ms)) return false;
+    s.rev = static_cast<uint32_t>(rev);
+    s.age_ms = static_cast<uint32_t>(age);
+    s.ms = static_cast<uint32_t>(ms);
+    out->show = s;
+    out->kind = Msg::Kind::Show;
+    return true;
+  }
 
   if (is_event) {
     EventMsg e;

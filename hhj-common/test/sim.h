@@ -257,6 +257,24 @@ class ModelBackend final : public NodeHal<hhj::NetHal> {
   std::map<Key, Reading> readings;
   int hellos = 0, acks = 0, stale = 0, invalid = 0;
 
+  // ---- driving the display (PROTOCOL.md, SHOW): once a second and at once on change
+  enum class Board { Off, Idle, Ready, Run, Result };
+  Board board = Board::Off;      // Off = this backend does not drive displays
+  uint32_t board_rev = 0;
+  int64_t board_start_ms = 0;    // Run: the counting START on THIS node's clock
+  uint32_t board_result_ms = 0;
+  std::vector<uint32_t> timers;  // where TIMER HELLOs came from
+  int shows = 0;
+
+  void show_idle() { board = Board::Idle; board_dirty_ = true; }
+  void show_ready() { board = Board::Ready; board_dirty_ = true; }
+  void show_run(uint32_t rev, int64_t start_on_my_clock) {
+    board = Board::Run; board_rev = rev; board_start_ms = start_on_my_clock; board_dirty_ = true;
+  }
+  void show_result(uint32_t rev, uint32_t ms) {
+    board = Board::Result; board_rev = rev; board_result_ms = ms; board_dirty_ = true;
+  }
+
   void power(bool on) {
     online = on;
     if (on) node_wifi_connect(WifiPlan::Net::Primary);
@@ -280,6 +298,11 @@ class ModelBackend final : public NodeHal<hhj::NetHal> {
         continue;
       }
       char out[200];
+      if (m.kind == hhj::Msg::Kind::Hello && m.hello.role == hhj::Role::Timer &&
+          std::find(timers.begin(), timers.end(), from) == timers.end()) {
+        timers.push_back(from);
+        board_dirty_ = true;
+      }
       if (m.kind == hhj::Msg::Kind::Hello && m.hello.role != hhj::Role::Backend) {
         hhj::HelloMsg h;
         h.role = hhj::Role::Backend;
@@ -313,7 +336,35 @@ class ModelBackend final : public NodeHal<hhj::NetHal> {
         acks++;
       }
     }
+    send_show();
   }
+
+ private:
+  void send_show() {
+    if (!online || board == Board::Off) return;
+    const int64_t now = node_now();
+    if (!board_dirty_ && now < next_show_ms_) return;
+    board_dirty_ = false;
+    next_show_ms_ = now + 1000;
+    hhj::ShowMsg s;
+    s.rev = board_rev;
+    switch (board) {
+      case Board::Idle:   s.state = hhj::Show::Idle; break;
+      case Board::Ready:  s.state = hhj::Show::Ready; break;
+      case Board::Run:    s.state = hhj::Show::Run; s.age_ms = static_cast<uint32_t>(now - board_start_ms); break;
+      case Board::Result: s.state = hhj::Show::Result; s.ms = board_result_ms; break;
+      case Board::Off:    return;
+    }
+    char out[120];
+    const size_t len = hhj::encode(s, out, sizeof(out));
+    for (uint32_t timer_ip : timers) {
+      node_send(timer_ip, out, len);
+      shows++;
+    }
+  }
+
+  bool board_dirty_ = false;
+  int64_t next_show_ms_ = 0;
 };
 
 }  // namespace sim

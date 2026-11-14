@@ -227,3 +227,93 @@ class GateAgainstBackendTests(TransactionTestCase):
         self.assertEqual((r.time_mark, r.gate_boot, r.gate_seq), ('FINISH', 555, 1))
         self.assertLess(abs(r.sensor_time - edge), 25, (r.sensor_time, edge))   # a second late, still the right time
         self.assertGreater(r.server_time - r.sensor_time, 800)
+
+
+@needs_sim
+class DisplayAgainstBackendTests(TransactionTestCase):
+    """The real display application (timer_app.h) following the real backend:
+    what the operator's console shows is what the digits show."""
+
+    def setUp(self):
+        from unittest import mock
+        from timings import arena, udp_link
+        arena._set_last_result(None)
+        for target in ('timings.live.publish', 'timings.live.publish_states', 'timings.live.publish_devices'):
+            p = mock.patch(target)
+            p.start()
+            self.addCleanup(p.stop)
+        self.registry = DeviceRegistry()
+        self.server = LinkServer(LOCAL, 0, registry=self.registry).start()
+        self.addCleanup(self.server.stop)
+        # changes kick this server, as they do the process-wide one in production
+        p = mock.patch.object(udp_link, '_server', self.server)
+        p.start()
+        self.addCleanup(p.stop)
+
+    @staticmethod
+    def digits(ms):
+        """The four characters the display shows for a time (display.h: SS.hh, truncated)."""
+        cs = ms // 10
+        return f'{cs // 100:2d}{cs % 100:02d}'
+
+    def test_display_shows_the_console_time_and_follows_the_operators_picks(self):
+        from django.db import transaction
+        from timings import arena
+        from timings.tests.helpers import Client, event, wait_for
+
+        timer = subprocess.Popen([SIM, 'timer', '--peer', f'{LOCAL}:{self.server.port}', '--run', '7000'],
+                                 stdout=subprocess.PIPE, text=True)
+        self.addCleanup(timer.wait)
+        wait_for(lambda: self.registry.addresses('TIMER'), msg='the timer to announce itself')
+
+        competition = arena.create_competition('Display e2e')
+        entry = arena.add_entry(competition, 'Ala')
+
+        def change(fn):
+            with transaction.atomic():
+                fn()
+                arena.notify(competition.pk)
+
+        change(lambda: (arena.select(competition, entry), arena.set_capture(competition, True)))
+        run = arena.open_run()
+        gate = Client(self.server.port)
+        self.addCleanup(gate.close)
+
+        def cut(mark, seq):
+            gate.send(event(mark, boot=1 if mark == 'START' else 2, seq=seq, age_ms=0))
+            self.assertIsInstance(gate.recv()[0], link.Ack)
+
+        time.sleep(1.2)                       # the timer's power-up 8888 is over; it shows 0.00
+        cut('START', 1)
+        time.sleep(1.3)
+        cut('FINISH', 1)                      # a kid runs through the finish
+        time.sleep(0.9)
+        cut('FINISH', 2)                      # the rider's real finish: the last FINISH counts
+        time.sleep(0.4)
+        session = arena.snapshot(competition)['session']
+        with_last = session['time_ms']
+        first_finish = session['finishes'][0]
+        self.assertEqual(session['finish_id'], session['finishes'][1]['id'])
+        time.sleep(0.6)
+        change(lambda: arena.pick(run, finish=first_finish['id']))     # the operator picks the other FINISH
+        with_first = arena.snapshot(competition)['session']['time_ms']
+        self.assertEqual(with_first, first_finish['time_ms'])
+        self.assertTrue(1200 < with_first < 1700 and 2100 < with_last < 2700, (with_first, with_last))
+
+        out, _ = timer.communicate(timeout=30)
+        shown = [(m.group(1), int(m.group(2))) for m in re.finditer(r'^DISPLAY (.{4}) t=(\d+)$', out, re.M)]
+        texts = [t for t, _ in shown]
+        self.assertEqual(texts[0], '8888', out)                        # power-up self-test
+        self.assertIn(' 000', texts)                                   # session open, nobody started: 0.00
+        self.assertIn('backend took over the display', out)
+        # the running clock was shown (it passed 0.50 and 1.00 on its way)
+        self.assertIn(' 050', texts)
+        self.assertIn(' 100', texts)
+        # then exactly the console's number - first with the last FINISH, then with the picked one
+        self.assertIn(self.digits(with_last), texts)
+        self.assertEqual([t for t in texts if t.strip()][-1], self.digits(with_first), out[-600:])
+        i_last = texts.index(self.digits(with_last))
+        i_first = len(texts) - 1 - texts[::-1].index(self.digits(with_first))
+        self.assertLess(i_last, i_first)
+        # and it never started counting on its own from the gates: no gate datagram reached it
+        self.assertNotIn('clock started', out)

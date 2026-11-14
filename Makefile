@@ -19,6 +19,7 @@ PORT  ?=
 PORTFLAG_UPLOAD  := $(if $(PORT),--upload-port $(PORT),)
 PORTFLAG_MONITOR := $(if $(PORT),--port $(PORT),)
 
+FRONTEND    := $(ROOT)/hhj-frontend
 BACKEND     := $(ROOT)/hhj-backend
 PY          := $(BACKEND)/.venv/bin/python
 # The shell may have another project's virtualenv active; never install into that one.
@@ -50,7 +51,7 @@ endef
 $(foreach s,$(TEST_SRCS),$(eval $(call TEST_RULES,$(s))))
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-firmware test-backend test-link coverage mutation sim \
+.PHONY: help test test-firmware test-backend test-frontend test-link coverage mutation sim frontend-build \
         build build-start build-finish build-timer build-timer-test \
         flash-start flash-finish flash-timer flash-timer-test monitor-sensor monitor-timer \
         backend backend-venv backend-migrate frontend clean
@@ -60,20 +61,22 @@ help:
 	@echo "  make test              everything below"
 	@echo "  make test-firmware     host tests of sensor / timer / shared code (ASan + UBSan, -Werror)"
 	@echo "  make test-backend      Django tests, including the C++ gate code against the real backend"
-	@echo "  make test-link         only that last part (decoders compared, gate <-> backend over UDP)"
+	@echo "  make test-link         only that last part (decoders compared, gate + display <-> backend over UDP)"
+	@echo "  make test-frontend     operator console tests (Vitest)"
 	@echo "  make coverage          line / branch coverage of the firmware logic (must be 100% lines)"
-	@echo "  make mutation          mutation test of the firmware logic (slow: ~45 min; ONLY=name, MUT_JOBS=n)"
+	@echo "  make mutation          mutation test of the firmware logic (slow: ~10 min with MUT_JOBS=4; ONLY=name)"
 	@echo "Firmware (PlatformIO)"
 	@echo "  make build             compile start gate, finish gate and timer"
 	@echo "  make flash-start | flash-finish | flash-timer | flash-timer-test   [PORT=/dev/cu...]"
 	@echo "  make monitor-sensor | monitor-timer                                [PORT=/dev/cu...]"
 	@echo "Apps"
 	@echo "  make backend           migrate + run the server on $(BACKEND_ADDR) (UDP link on 3004)"
-	@echo "  make frontend          npm start in hhj-frontend"
-	@echo "  make sim               build the host gate simulator ($(SIM))"
+	@echo "  make frontend          the operator console on http://localhost:3000 (needs the backend)"
+	@echo "  make frontend-build    type-check and bundle the console into hhj-frontend/dist"
+	@echo "  make sim               build the desktop gate / display simulator ($(SIM))"
 	@echo "  make clean             remove ./build"
 
-test: test-firmware test-backend
+test: test-firmware test-backend test-frontend
 	@echo "ALL TESTS PASSED"
 
 test-firmware: $(TEST_BINS)
@@ -120,8 +123,19 @@ test-backend: $(PY) $(SIM)
 test-link: $(PY) $(SIM)
 	cd $(BACKEND) && HHJ_GATE_SIM=$(SIM) $(PY) manage.py test timings.tests.test_cross
 
-frontend:
-	cd $(ROOT)/hhj-frontend && npm install && npm start
+# ------------------------------------------------------------------- frontend
+$(FRONTEND)/node_modules: $(FRONTEND)/package-lock.json
+	cd $(FRONTEND) && npm install
+	@touch $@
+
+frontend: $(FRONTEND)/node_modules
+	cd $(FRONTEND) && npm start
+
+frontend-build: $(FRONTEND)/node_modules
+	cd $(FRONTEND) && npm run build
+
+test-frontend: $(FRONTEND)/node_modules
+	cd $(FRONTEND) && npm test
 
 # ------------------------------------------------------------------- firmware
 build: build-start build-finish build-timer

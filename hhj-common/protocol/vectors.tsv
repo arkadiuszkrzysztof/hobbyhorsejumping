@@ -111,3 +111,26 @@ bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"no\te":1}
 ok	-	kind=event mark=START age_ms=5 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"big":1e400,"huge":123456789012345678901234567890,"esc":"\u0041\\"}
 bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":NaN}
 bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":Infinity}
+# ---- SHOW ---------------------------------------------------------------------
+ok	c	kind=show state=IDLE rev=0 age_ms=0 ms=0	{"show":"IDLE","rev":0,"age_ms":0,"ms":0}
+ok	c	kind=show state=READY rev=7 age_ms=0 ms=0	{"show":"READY","rev":7,"age_ms":0,"ms":0}
+ok	c	kind=show state=RUN rev=3141592653 age_ms=4567 ms=0	{"show":"RUN","rev":3141592653,"age_ms":4567,"ms":0}
+ok	c	kind=show state=RESULT rev=4294967295 age_ms=4294967295 ms=4294967295	{"show":"RESULT","rev":4294967295,"age_ms":4294967295,"ms":4294967295}
+ok	-	kind=show state=IDLE rev=0 age_ms=0 ms=0	{"show":"IDLE"}
+ok	-	kind=show state=RESULT rev=0 age_ms=0 ms=23450	{"ms":23450,"show":"RESULT","note":"x"}
+bad	-	-	{"show":"idle"}
+bad	-	-	{"show":"STOP"}
+bad	-	-	{"show":"START"}
+bad	-	-	{"show":""}
+bad	-	-	{"show":1}
+bad	-	-	{"show":"\u0052UN"}
+bad	-	-	{"show":"RUN","rev":-1}
+bad	-	-	{"show":"RUN","rev":4294967296}
+bad	-	-	{"show":"RUN","age_ms":-1}
+bad	-	-	{"show":"RUN","age_ms":4294967296}
+bad	-	-	{"show":"RESULT","ms":4294967296}
+bad	-	-	{"show":"RESULT","ms":"5"}
+bad	-	-	{"show":"RESULT","ms":5.5}
+bad	-	-	{"show":"RUN","hello":"TIMER","boot":1}
+bad	-	-	{"show":"RUN","time_mark":"START","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"show":"RUN","ack":"START","boot":3,"seq":1}

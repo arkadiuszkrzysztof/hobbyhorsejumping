@@ -30,6 +30,11 @@ inline std::string describe(const Msg& m) {
       snprintf(buf, sizeof(buf), "kind=ack mark=%s boot=%lu seq=%lu", role_name(m.ack.mark),
                static_cast<unsigned long>(m.ack.boot), static_cast<unsigned long>(m.ack.seq));
       return buf;
+    case Msg::Kind::Show:
+      snprintf(buf, sizeof(buf), "kind=show state=%s rev=%lu age_ms=%lu ms=%lu", show_name(m.show.state),
+               static_cast<unsigned long>(m.show.rev), static_cast<unsigned long>(m.show.age_ms),
+               static_cast<unsigned long>(m.show.ms));
+      return buf;
     case Msg::Kind::None:
       break;
   }

@@ -165,6 +165,15 @@ INTERNAL_IPS = [
   '127.0.0.1',
 ]
 
+# The operator console is used without logging in, on the system's own WiFi.
+# No session authentication for the API: otherwise being logged into /admin/ in
+# the same browser would make every console request fail the CSRF check.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
+    'UNAUTHENTICATED_USER': None,
+}
+
 # UDP link (hhj-common/PROTOCOL.md). HHJ_LINK=1/0 forces the listener on/off;
 # unset, it runs only in the serving process of `manage.py runserver`.
 HHJ_LINK_PORT = int(os.environ.get('HHJ_LINK_PORT', '3004'))

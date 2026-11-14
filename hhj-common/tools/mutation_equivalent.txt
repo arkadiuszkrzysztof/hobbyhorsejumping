@@ -99,6 +99,7 @@ hhj-sensor/gate_app.h @@ int64_t t_break_a_ = 0, t_break_b_ = 0; @@ int64_t t_br
 hhj-sensor/gate_app.h @@ int64_t t_break_a_ = 0, t_break_b_ = 0; @@ int64_t t_break_a_ = 0, t_break_b_ = 1; @@ (init) set at the break edge, read at the release edge that follows it
 
 # ---- timer_app.h
+hhj-timer/include/timer_app.h @@ explicit Shown(View v, int64_t time_ms = 0, int64_t since = 0) : view(v), ms(time_ms), since_ms(since) {} @@ explicit Shown(View v, int64_t time_ms = 0, int64_t since = 1) : view(v), ms(time_ms), since_ms(since) {} @@ since_ms is only read for a Result, which always passes it explicitly
 hhj-timer/include/timer_app.h @@ bool have = false; @@ bool have = true; @@ (init) the link is down at power-up, and a down link sets it to false before anything reads it
 hhj-timer/include/timer_app.h @@ int64_t seen_ms = 0; @@ int64_t seen_ms = 1; @@ (init) only read while have is true, after a HELLO has set it
 hhj-timer/include/timer_app.h @@ uint32_t st = 0; @@ uint32_t st = 1; @@ (init) only read while have is true, after a HELLO has set it
@@ -113,3 +114,13 @@ hhj-timer/include/timer_app.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 
 hhj-timer/include/timer_app.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 0, seq = 1; @@ (init) an unset entry has mark None, which no event carries, so it never matches
 hhj-timer/include/timer_app.h @@ size_t seen_next_ = 0; @@ size_t seen_next_ = 1; @@ (init) it does not matter at which slot the ring starts
 hhj-timer/include/timer_app.h @@ int64_t t_shown_ = 0; @@ int64_t t_shown_ = 1; @@ (init) only read when shown_valid_ is true, after the first frame has set it
+
+# ---- remote.h
+hhj-timer/include/remote.h @@ if (!same || start < t_start_) t_start_ = start;                            // R-3 @@ if (!same || start <= t_start_) t_start_ = start;                            // R-3 @@ (identity) for equal values the assignment changes nothing
+hhj-timer/include/remote.h @@ return ms < 0 ? 0 : ms; @@ return ms <= 0 ? 0 : ms; @@ (identity) 0 is returned as 0 either way
+hhj-timer/include/remote.h @@ return ms < 0 ? 0 : ms; @@ return ms < 1 ? 0 : ms; @@ (identity) 0 is returned as 0 either way
+hhj-timer/include/remote.h @@ uint32_t rev_ = 0; @@ uint32_t rev_ = 1; @@ (init) only compared while active(), which needs a SHOW to have set it
+hhj-timer/include/remote.h @@ int64_t t_heard_ = 0; @@ int64_t t_heard_ = 1; @@ (init) only read when heard_ is true, after a SHOW has set it
+hhj-timer/include/remote.h @@ int64_t t_start_ = 0; @@ int64_t t_start_ = 1; @@ (init) only read in the Run state, after a RUN has set it
+hhj-timer/include/remote.h @@ int64_t t_result_ = 0; @@ int64_t t_result_ = 1; @@ (init) only meaningful in the Result state, after a RESULT has set it
+hhj-timer/include/remote.h @@ int64_t ms_ = 0; @@ int64_t ms_ = 1; @@ (init) only read in the Result state, after a RESULT has set it

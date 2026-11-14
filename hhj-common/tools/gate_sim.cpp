@@ -9,6 +9,11 @@
 //       broadcast or unicast goes to --peer. Prints the gate's log, one
 //       "EDGE epoch_ms=..." line per crossing and a final "SUMMARY ..." line.
 //
+//   hhj-gate-sim timer  --peer HOST:PORT [--boot N] [--run MS]
+//       Runs the display unit (timer_app.h) the same way and prints a line
+//       "DISPLAY <4 characters> t=<ms>" whenever the digits change
+//       (digits, '-' '_' '^' for the status bars, ' ' for a dark digit).
+//
 //   hhj-gate-sim decode
 //       Reads datagrams as hex, one per line, from stdin and prints for each
 //       what link.h makes of it, in the notation of protocol/vectors.tsv
@@ -33,8 +38,10 @@
 #include <thread>
 #include <vector>
 
+#include "config.h"      // hhj-timer wiring
 #include "gate_app.h"
 #include "hhj/describe.h"
+#include "timer_app.h"
 
 namespace {
 
@@ -152,6 +159,114 @@ int run_gate(int argc, char** argv) {
   return 0;
 }
 
+// ------------------------------------------------------------------- timer
+const hhj::Segments kWiring = {SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G};
+
+char glyph_char(uint8_t g) {
+  for (unsigned d = 0; d < 10; d++) {
+    if (g == hhj::glyph_digit(kWiring, d)) return static_cast<char>('0' + d);
+  }
+  if (g == hhj::glyph_dash(kWiring)) return '-';
+  if (g == hhj::glyph_low(kWiring)) return '_';
+  if (g == hhj::glyph_high(kWiring)) return '^';
+  return g == hhj::kBlank ? ' ' : '?';
+}
+
+class PosixTimerHal final : public hhj::TimerHal {
+ public:
+  explicit PosixTimerHal(const sockaddr_in& peer) : peer_(peer), t0_(steady_ms()) {
+    fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in any{};
+    any.sin_family = AF_INET;
+    any.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (fd_ < 0 || bind(fd_, reinterpret_cast<const sockaddr*>(&any), sizeof(any)) != 0) {
+      perror("socket/bind");
+      exit(2);
+    }
+    fcntl(fd_, F_SETFL, O_NONBLOCK);
+  }
+  ~PosixTimerHal() { close(fd_); }
+
+  int64_t now_ms() override { return steady_ms() - t0_; }
+  bool wifi_up() override { return true; }
+  void wifi_connect(hhj::WifiPlan::Net) override {}
+  void net_open() override {}
+  bool net_send(uint32_t, const char* data, size_t len) override {
+    return sendto(fd_, data, len, 0, reinterpret_cast<const sockaddr*>(&peer_), sizeof(peer_)) == static_cast<ssize_t>(len);
+  }
+  size_t net_recv(char* buf, size_t cap, uint32_t* from_ip) override {
+    char big[2048];
+    const ssize_t n = recv(fd_, big, sizeof(big), 0);
+    if (n <= 0 || static_cast<size_t>(n) > cap) return 0;
+    memcpy(buf, big, static_cast<size_t>(n));
+    *from_ip = 1;
+    return static_cast<size_t>(n);
+  }
+  int rssi() override { return -42; }
+  void log(const char* line) override {
+    puts(line);
+    fflush(stdout);
+  }
+  void show(const uint8_t chain[4]) override {
+    char text[5];
+    for (int i = 0; i < 4; i++) text[i] = glyph_char(CHAIN_FIRST_IS_LEFT != 0 ? chain[3 - i] : chain[i]);
+    text[4] = '\0';
+    if (strcmp(text, last_) != 0) {
+      memcpy(last_, text, sizeof(last_));
+      printf("DISPLAY %s t=%lld\n", text, static_cast<long long>(now_ms()));
+      fflush(stdout);
+    }
+  }
+  int read_key() override { return -1; }
+
+ private:
+  sockaddr_in peer_;
+  int64_t t0_;
+  int fd_ = -1;
+  char last_[5] = "";
+};
+
+bool parse_peer(const std::string& peer, sockaddr_in* to) {
+  const size_t colon = peer.rfind(':');
+  if (colon == std::string::npos) return false;
+  *to = sockaddr_in{};
+  to->sin_family = AF_INET;
+  to->sin_port = htons(static_cast<uint16_t>(atoi(peer.c_str() + colon + 1)));
+  return inet_pton(AF_INET, peer.substr(0, colon).c_str(), &to->sin_addr) == 1;
+}
+
+int run_timer(int argc, char** argv) {
+  hhj::TimerAppConfig cfg;
+  cfg.boot = 0x71300000u | static_cast<uint32_t>(getpid() & 0xFFFF);
+  cfg.fw = "sim";
+  cfg.segments = kWiring;
+  cfg.chain_first_is_left = CHAIN_FIRST_IS_LEFT != 0;
+  std::string peer;
+  int64_t run_ms = 5000;
+  for (int i = 2; i + 1 < argc; i += 2) {
+    const std::string key = argv[i], value = argv[i + 1];
+    if (key == "--peer") {
+      peer = value;
+    } else if (key == "--boot") {
+      cfg.boot = static_cast<uint32_t>(strtoul(value.c_str(), nullptr, 0));
+    } else if (key == "--run") {
+      run_ms = atoll(value.c_str());
+    } else {
+      return fprintf(stderr, "unknown option %s\n", key.c_str()), 2;
+    }
+  }
+  sockaddr_in to{};
+  if (!parse_peer(peer, &to)) return fprintf(stderr, "--peer HOST:PORT is required\n"), 2;
+  PosixTimerHal hal(to);
+  hhj::TimerApp app(hal, cfg);
+  app.begin();
+  while (hal.now_ms() < run_ms) {
+    app.tick();
+    std::this_thread::sleep_for(std::chrono::microseconds(500));
+  }
+  return 0;
+}
+
 int hex_value(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -186,8 +301,10 @@ int run_decode() {
 
 int main(int argc, char** argv) {
   if (argc >= 2 && strcmp(argv[1], "gate") == 0) return run_gate(argc, argv);
+  if (argc >= 2 && strcmp(argv[1], "timer") == 0) return run_timer(argc, argv);
   if (argc == 2 && strcmp(argv[1], "decode") == 0) return run_decode();
   fprintf(stderr, "usage: %s gate --mode START|FINISH --peer HOST:PORT [--boot N] [--cross MS]... [--run MS]\n"
-                  "       %s decode   < hex-lines\n", argv[0], argv[0]);
+                  "       %s timer --peer HOST:PORT [--boot N] [--run MS]\n"
+                  "       %s decode   < hex-lines\n", argv[0], argv[0], argv[0]);
   return 2;
 }

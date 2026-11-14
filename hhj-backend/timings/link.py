@@ -20,6 +20,7 @@ U53 = 2 ** 53
 
 GATE_ROLES = ('START', 'FINISH')
 ROLES = ('START', 'FINISH', 'TIMER', 'BACKEND')
+SHOW_STATES = ('IDLE', 'READY', 'RUN', 'RESULT')
 
 _FW_RE = re.compile(r'[A-Za-z0-9._-]{1,15}')
 
@@ -57,7 +58,16 @@ class Ack:
     seq: int
 
 
-Message = Union[Event, Hello, Ack]
+@dataclass(frozen=True)
+class Show:
+    """What the display should show (backend -> timer)."""
+    state: str          # IDLE, READY, RUN, RESULT
+    rev: int = 0        # identifies what is being timed
+    age_ms: int = 0     # RUN: how long ago the counting START was cut, at the moment of sending
+    ms: int = 0         # RESULT: the time to show
+
+
+Message = Union[Event, Hello, Ack, Show]
 
 
 class _Reject(Exception):
@@ -240,10 +250,18 @@ def _decode(data) -> Message:
         raise _Reject('not bytes')
     fields = _scan(bytes(data))
 
-    kinds = [k for k in (b'time_mark', b'hello', b'ack') if k in fields]
+    kinds = [k for k in (b'time_mark', b'hello', b'ack', b'show') if k in fields]
     if len(kinds) != 1:
         raise _Reject('kind')
     kind = kinds[0]
+
+    if kind == b'show':
+        return Show(
+            state=_role(fields, b'show', SHOW_STATES),
+            rev=_int(fields, b'rev', 0, U32, 0),
+            age_ms=_int(fields, b'age_ms', 0, U32, 0),
+            ms=_int(fields, b'ms', 0, U32, 0),
+        )
 
     if kind == b'time_mark':
         return Event(
@@ -301,6 +319,8 @@ def describe(msg: Optional[Message]) -> str:
                 f'seq={msg.seq} pending={msg.pending} ms={msg.ms} rssi={msg.rssi} net={msg.net}')
     if isinstance(msg, Ack):
         return f'kind=ack mark={msg.mark} boot={msg.boot} seq={msg.seq}'
+    if isinstance(msg, Show):
+        return f'kind=show state={msg.state} rev={msg.rev} age_ms={msg.age_ms} ms={msg.ms}'
     return '-'
 
 
@@ -346,7 +366,13 @@ def encode_ack(a: Ack) -> bytes:
     return _dump([('ack', a.mark), ('boot', a.boot), ('seq', a.seq)])
 
 
+def encode_show(s: Show) -> bytes:
+    return _dump([('show', s.state), ('rev', s.rev), ('age_ms', s.age_ms), ('ms', s.ms)])
+
+
 def encode(msg: Message) -> bytes:
+    if isinstance(msg, Show):
+        return encode_show(msg)
     if isinstance(msg, Event):
         return encode_event(msg)
     if isinstance(msg, Hello):

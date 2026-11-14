@@ -450,3 +450,67 @@ TEST(finish_crossing_one_second_after_start_is_not_a_result) {
   CHECK(abs64(a.timer_result() - 19000) <= 3);
   CHECK_EQ(a.backend.readings.size(), 3);           // the server keeps every reading; choosing is its business
 }
+
+// ----------------------------------------------- the operator's backend decides
+// With a backend that drives the display (SHOW), the big digits follow the
+// operator's session, not whoever runs through a gate.
+TEST(display_follows_the_backend_not_stray_crossings) {
+  Arena a;
+  a.backend.show_idle();
+  a.run(3000);
+  CHECK(a.timer.app.remote().active(a.timer.hal.now_ms()));
+  CHECK_STR(a.timer.text(), "----");
+  // kids run through both gates while no session is open
+  a.start.hal.crossing(4000);
+  a.finish.hal.crossing(8000);
+  a.run_until(12000);
+  CHECK_STR(a.timer.text(), "----");
+  CHECK_EQ(a.backend.readings.size(), 2);                    // the server still stored them
+  // the operator opens a session: 0.00
+  a.backend.show_ready();
+  a.run(50);
+  CHECK_STR(a.timer.text(), " 000");
+  // the rider starts; the backend learns the cut from the gate and shows the clock from it
+  a.start.hal.crossing(15000);
+  a.run_until(15300);
+  const auto* s = a.backend.find(Role::Start, kStartBoot, 2);
+  CHECK(s != nullptr);
+  a.backend.show_run(1, s->edge_ms);
+  a.run_until(25000);
+  CHECK(abs64(a.timer.shown_ms() - 10000) <= 10);            // 10 s after the cut, to the hundredth shown
+  CHECK(abs64(a.timer.app.remote().shown_ms(a.timer.hal.now_ms()) - 10000) <= 6);
+  // finish: the backend computes the result and the display shows exactly that number
+  a.finish.hal.crossing(15000 + 23450);
+  a.run_until(15000 + 23450 + 400);
+  const auto* f = a.backend.find(Role::Finish, kFinishBoot, 2);
+  CHECK(f != nullptr);
+  const int64_t result = f->edge_ms - s->edge_ms;
+  CHECK(abs64(result - 23450) <= 3);
+  a.backend.show_result(2, static_cast<uint32_t>(result));
+  a.run(100);
+  CHECK_EQ(a.timer.app.remote().shown_ms(a.timer.hal.now_ms()), result);
+  // later crossings change nothing on the display
+  a.start.hal.crossing(45000);
+  a.run_until(50000);
+  CHECK_EQ(a.timer.app.remote().shown_ms(a.timer.hal.now_ms()), result);
+  CHECK(a.backend.shows > 40);                               // once a second, plus the changes
+}
+
+TEST(display_carries_on_alone_when_the_backend_dies_mid_run) {
+  Arena a;
+  a.backend.show_ready();
+  a.run(3000);
+  a.ride(5000, 20000);
+  a.run_until(5300);
+  a.backend.show_run(1, a.backend.find(Role::Start, kStartBoot, 1)->edge_ms);
+  a.run_until(10000);
+  CHECK(a.timer.app.remote().active(a.timer.hal.now_ms()));
+  a.backend.power(false);                                    // server crashes
+  a.run_until(16000);
+  CHECK(!a.timer.app.remote().active(a.timer.hal.now_ms()));
+  CHECK(abs64(a.timer.shown_ms() - 11000) <= 10);            // the own stopwatch had the same START
+  a.run_until(27000);
+  CHECK(a.timer_finished());
+  CHECK(abs64(a.timer_result() - 20000) <= 3);               // and finishes the run by itself
+  CHECK(a.timer.hal.logged("backend silent -> showing the own stopwatch"));
+}
