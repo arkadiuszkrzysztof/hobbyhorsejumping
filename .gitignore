@@ -1,0 +1,8 @@
+# macOS
+.DS_Store
+
+# host test / coverage / simulator output (make test, make coverage, make sim)
+/build/
+
+# private WiFi credentials (see hhj-common/include/hhj/wifi_config.h)
+hhj-common/include/hhj/wifi_secrets.h

@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Only used when this folder is opened on its own; the workspace in the
+      // repo root has the full task list.
+      "label": "hhj-sensor: host tests (make test-firmware)",
+      "type": "shell",
+      "command": "make -C .. test-firmware",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+# HHJ link protocol conformance vectors. Format: see ../PROTOCOL.md
+# verdict	canon	expect	payload
+#
+# ---- EVENT, canonical encodings ------------------------------------------
+ok	c	kind=event mark=START age_ms=12 t=123456 boot=3735928559 seq=7 dir=1 gap_ms=38 n=0	{"time_mark":"START","age_ms":12,"t":123456,"boot":3735928559,"seq":7,"dir":1,"gap_ms":38,"n":0}
+ok	c	kind=event mark=FINISH age_ms=0 t=0 boot=0 seq=1 dir=-1 gap_ms=0 n=0	{"time_mark":"FINISH","age_ms":0,"t":0,"boot":0,"seq":1,"dir":-1,"gap_ms":0,"n":0}
+ok	c	kind=event mark=FINISH age_ms=4294967295 t=9007199254740992 boot=4294967295 seq=4294967295 dir=0 gap_ms=65535 n=65535	{"time_mark":"FINISH","age_ms":4294967295,"t":9007199254740992,"boot":4294967295,"seq":4294967295,"dir":0,"gap_ms":65535,"n":65535}
+ok	c	kind=event mark=START age_ms=299999 t=86400000 boot=1 seq=300 dir=1 gap_ms=150 n=306	{"time_mark":"START","age_ms":299999,"t":86400000,"boot":1,"seq":300,"dir":1,"gap_ms":150,"n":306}
+# ---- EVENT, accepted variations ------------------------------------------
+ok	-	kind=event mark=START age_ms=5 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	{"time_mark":"START","age_ms":5,"boot":9,"seq":2}
+ok	-	kind=event mark=FINISH age_ms=5 t=77 boot=9 seq=2 dir=-1 gap_ms=3 n=4	{"n":4,"gap_ms":3,"dir":-1,"seq":2,"boot":9,"t":77,"age_ms":5,"time_mark":"FINISH"}
+ok	-	kind=event mark=START age_ms=5 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	 { "time_mark" : "START" , "age_ms" : 5 , "boot" : 9 , "seq" : 2 }
+ok	-	kind=event mark=START age_ms=5 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"future":"x","flag":true,"none":null,"ratio":1.5,"neg":-3}
+ok	-	kind=event mark=START age_ms=0 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	{"time_mark":"START","age_ms":-0,"boot":9,"seq":2}
+ok	-	kind=event mark=START age_ms=5 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"note":"quote \" and brace } inside"}
+# ---- HELLO, canonical encodings ------------------------------------------
+ok	c	kind=hello role=START boot=3735928559 up_ms=123456 fw=2.1.0 st=24 seq=7 pending=0 ms=0 rssi=-61 net=0	{"hello":"START","boot":3735928559,"up_ms":123456,"fw":"2.1.0","st":24,"seq":7,"pending":0,"rssi":-61,"net":0}
+ok	c	kind=hello role=FINISH boot=1 up_ms=0 fw=2.1.0 st=0 seq=0 pending=8 ms=0 rssi=0 net=1	{"hello":"FINISH","boot":1,"up_ms":0,"fw":"2.1.0","st":0,"seq":0,"pending":8,"rssi":0,"net":1}
+ok	c	kind=hello role=TIMER boot=77 up_ms=5000 fw=1.1.0 st=1 seq=0 pending=0 ms=12340 rssi=-55 net=0	{"hello":"TIMER","boot":77,"up_ms":5000,"fw":"1.1.0","st":1,"ms":12340,"rssi":-55,"net":0}
+ok	c	kind=hello role=BACKEND boot=42 up_ms=1000 fw=1.0.0 st=0 seq=0 pending=0 ms=0 rssi=0 net=0	{"hello":"BACKEND","boot":42,"up_ms":1000,"fw":"1.0.0"}
+# ---- HELLO, accepted variations ------------------------------------------
+ok	-	kind=hello role=TIMER boot=5 up_ms=0 fw=- st=0 seq=0 pending=0 ms=0 rssi=0 net=0	{"hello":"TIMER","boot":5}
+ok	-	kind=hello role=BACKEND boot=5 up_ms=0 fw=- st=0 seq=0 pending=0 ms=0 rssi=0 net=0	{"boot":5,"hello":"BACKEND","epoch_ms":1794000000000}
+ok	-	kind=hello role=START boot=5 up_ms=1 fw=a-b_c.9 st=4294967295 seq=4294967295 pending=65535 ms=4294967295 rssi=-128 net=255	{"hello":"START","boot":5,"up_ms":1,"fw":"a-b_c.9","st":4294967295,"seq":4294967295,"pending":65535,"ms":4294967295,"rssi":-128,"net":255}
+# ---- ACK ------------------------------------------------------------------
+ok	c	kind=ack mark=START boot=3735928559 seq=7	{"ack":"START","boot":3735928559,"seq":7}
+ok	c	kind=ack mark=FINISH boot=0 seq=4294967295	{"ack":"FINISH","boot":0,"seq":4294967295}
+ok	-	kind=ack mark=FINISH boot=3 seq=1	{"seq":1,"boot":3,"ack":"FINISH","from":"BACKEND"}
+# ---- rejected: not a flat JSON object ---------------------------------------
+# (the empty datagram is rejected too; it is tested in code because a TSV line cannot hold it reliably)
+bad	-	-	{}
+bad	-	-	[]
+bad	-	-	null
+bad	-	-	"START"
+bad	-	-	START
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2}}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2} x
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,}
+bad	-	-	{"time_mark":"START" "age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":{"y":1}}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":[1]}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"seq":3}
+bad	-	-	{'time_mark':'START','age_ms':5,'boot':9,'seq':2}
+bad	-	-	{time_mark:"START","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":tru}
+bad	-	-	{"time_mark":"START","age_ms":05,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":+5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":-}
+# ---- rejected: wrong kind / fields -------------------------------------------
+bad	-	-	{"age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","hello":"START","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","ack":"START","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"BOGUS","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"start","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"TIMER","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"BACKEND","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":1,"age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":0}
+bad	-	-	{"time_mark":"START","age_ms":-1,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":4294967296,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":4294967296,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":4294967296}
+bad	-	-	{"time_mark":"START","age_ms":"5","boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5.0,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5e0,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":true,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":null,"boot":9,"seq":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"dir":2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"dir":-2}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"gap_ms":65536}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"n":65536}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"t":-1}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"t":9007199254740993}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":99999999999999999999}
+bad	-	-	{"hello":"START"}
+bad	-	-	{"hello":"NOBODY","boot":5}
+bad	-	-	{"hello":"timer","boot":5}
+bad	-	-	{"hello":5,"boot":5}
+bad	-	-	{"hello":"TIMER","boot":-1}
+bad	-	-	{"hello":"TIMER","boot":5,"rssi":-129}
+bad	-	-	{"hello":"TIMER","boot":5,"rssi":128}
+bad	-	-	{"hello":"TIMER","boot":5,"net":256}
+bad	-	-	{"hello":"TIMER","boot":5,"pending":65536}
+bad	-	-	{"hello":"TIMER","boot":5,"fw":"sixteen-chars-xx"}
+bad	-	-	{"hello":"TIMER","boot":5,"fw":"has space"}
+bad	-	-	{"hello":"TIMER","boot":5,"fw":""}
+bad	-	-	{"hello":"TIMER","boot":5,"fw":7}
+bad	-	-	{"hello":"TIMER","boot":5,"fw":"a\"b"}
+bad	-	-	{"hello":"TIMER","boot":5,"ack":"START","seq":1}
+bad	-	-	{"ack":"START","boot":3}
+bad	-	-	{"ack":"START","seq":1}
+bad	-	-	{"ack":"START","boot":3,"seq":0}
+bad	-	-	{"ack":"TIMER","boot":3,"seq":1}
+bad	-	-	{"ack":"BACKEND","boot":3,"seq":1}
+bad	-	-	{"ack":true,"boot":3,"seq":1}
+# ---- key-count limit: 16 keys accepted, 17 rejected ---------------------------
+ok	-	kind=event mark=START age_ms=5 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"k5":0,"k6":0,"k7":0,"k8":0,"k9":0,"k10":0,"k11":0,"k12":0,"k13":0,"k14":0,"k15":0,"k16":0}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"k5":0,"k6":0,"k7":0,"k8":0,"k9":0,"k10":0,"k11":0,"k12":0,"k13":0,"k14":0,"k15":0,"k16":0,"k17":0}
+# ---- escapes never spell protocol words; unknown values may be anything valid --
+bad	-	-	{"time_mark":"\u0053TART","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"time_m\u0061rk":"START","age_ms":5,"boot":9,"seq":2}
+bad	-	-	{"hello":"\u0054IMER","boot":5}
+bad	-	-	{"hello":"TIMER","boot":5,"fw":"1\u002e0"}
+bad	-	-	{"ack":"\u0053TART","boot":3,"seq":1}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"no\te":1}
+ok	-	kind=event mark=START age_ms=5 t=0 boot=9 seq=2 dir=0 gap_ms=0 n=0	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"big":1e400,"huge":123456789012345678901234567890,"esc":"\u0041\\"}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":NaN}
+bad	-	-	{"time_mark":"START","age_ms":5,"boot":9,"seq":2,"x":Infinity}

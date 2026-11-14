@@ -10,6 +10,9 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import os
+import sys
+import tempfile
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -27,6 +30,9 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
+# django-debug-toolbar refuses to run under `manage.py test` (debug_toolbar.E001).
+TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
+
 
 # Application definition
 
@@ -38,7 +44,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'debug_toolbar',
     'rest_framework',
     'events',
     'timings',
@@ -52,8 +57,11 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'debug_toolbar.middleware.DebugToolbarMiddleware',
 ]
+
+if not TESTING:
+    INSTALLED_APPS.insert(INSTALLED_APPS.index('rest_framework'), 'debug_toolbar')
+    MIDDLEWARE.append('debug_toolbar.middleware.DebugToolbarMiddleware')
 
 ROOT_URLCONF = 'adminportal.urls'
 
@@ -87,10 +95,23 @@ CHANNEL_LAYERS = {
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# HHJ_DB overrides the database file (e.g. a throwaway file for manual checks).
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': os.environ.get('HHJ_DB') or BASE_DIR / 'db.sqlite3',
+        'OPTIONS': {
+            # The UDP listener thread and request threads write concurrently:
+            # wait for the lock instead of failing, and take the write lock at
+            # BEGIN so two writers cannot deadlock on a lock upgrade.
+            'timeout': 20,
+            'transaction_mode': 'IMMEDIATE',
+        },
+        'TEST': {
+            # A file (not the shared-cache in-memory DB) so that threads get
+            # proper locking with busy-timeout semantics in tests.
+            'NAME': os.path.join(tempfile.gettempdir(), 'hhj-backend-test.sqlite3'),
+        },
     }
 }
 
@@ -143,3 +164,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 INTERNAL_IPS = [
   '127.0.0.1',
 ]
+
+# UDP link (hhj-common/PROTOCOL.md). HHJ_LINK=1/0 forces the listener on/off;
+# unset, it runs only in the serving process of `manage.py runserver`.
+HHJ_LINK_PORT = int(os.environ.get('HHJ_LINK_PORT', '3004'))

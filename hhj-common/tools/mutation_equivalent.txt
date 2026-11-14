@@ -1,0 +1,115 @@
+# Mutants that survive `make mutation` because the change cannot alter behaviour.
+#
+# One per line:   file @@ original line @@ mutated line @@ why it cannot matter
+#
+# `make mutation` fails for a surviving mutant that is not listed here, and for
+# an entry here that no longer matches a surviving mutant. Before adding a
+# line, try to write a test that fails for the mutant, or to remove the code
+# that makes it redundant - most survivors were dealt with that way.
+#
+# The recurring reasons:
+#   (init)     an initial value that is always overwritten before it is read
+#   (identity) a comparison that only changes which of two branches handles a
+#              value for which both branches give the same result
+#   (unique)   a tie that cannot occur, or where either choice is the same
+#   (masked)   an error path that says "ok" without consuming input, so the
+#              caller fails on the very next character anyway
+
+# ---- json_scan.h
+hhj-common/include/hhj/json_scan.h @@ if (j >= n) return false; @@ if (j >= n) return true; @@ (masked) end of input inside a key or a string: the caller is left on the opening quote and its next check fails
+hhj-common/include/hhj/json_scan.h @@ if (c < 0x20 || c == '\\') return false; @@ if (c < 0x20 || c == '\\') return true; @@ (masked) the caller is left on the key's opening quote and its next check - for ':' - fails
+hhj-common/include/hhj/json_scan.h @@ if (*i >= n) return false; @@ if (*i >= n) return true; @@ (masked) no value before the end of input: the caller finds no ',' or '}' either and fails
+hhj-common/include/hhj/json_scan.h @@ if (c < 0x20) return false; @@ if (c < 0x20) return true; @@ (masked) the caller is left on the value's first character, which is neither ',' nor '}', and fails
+hhj-common/include/hhj/json_scan.h @@ if (j >= n || !is_digit(s[j])) return false; @@ if (j >= n || !is_digit(s[j])) return true; @@ (masked) the caller is left on the value's first character, which is neither ',' nor '}', and fails
+hhj-common/include/hhj/json_scan.h @@ if (s[j] == '0' && j + 1 < n && is_digit(s[j + 1])) return false;   // leading zero @@ if (s[j] == '0' && j + 1 < n && is_digit(s[j + 1])) return true;   // leading zero @@ (masked) the caller is left on the value's first character, which is neither ',' nor '}', and fails
+hhj-common/include/hhj/json_scan.h @@ if (s[j] == '0' && j + 1 < n && is_digit(s[j + 1])) return false;   // leading zero @@ if (s[j] == '0' && j + 2 < n && is_digit(s[j + 1])) return false;   // leading zero @@ only differs when a zero and one more digit are the last two bytes of the input; that input has no closing brace and is rejected either way
+hhj-common/include/hhj/json_scan.h @@ if (digits < 18) v = v * 10u + static_cast<uint64_t>(s[j] - '0'); @@ if (digits <= 18) v = v * 10u + static_cast<uint64_t>(s[j] - '0'); @@ lets a 19th digit into v, but a number of more than 18 digits is never used as an integer (it stays Type::Other), and 19 digits cannot overflow uint64
+hhj-common/include/hhj/json_scan.h @@ if (digits < 18) v = v * 10u + static_cast<uint64_t>(s[j] - '0'); @@ if (digits < 19) v = v * 10u + static_cast<uint64_t>(s[j] - '0'); @@ same as the line above
+hhj-common/include/hhj/json_scan.h @@ if (n - *i < len || memcmp(s + *i, word, len) != 0) return false; @@ if (n - *i <= len || memcmp(s + *i, word, len) != 0) return false; @@ only rejects true/false/null when it is the very last thing in the input, which is rejected anyway for the missing '}'
+
+# ---- wifi_plan.h
+hhj-common/include/hhj/wifi_plan.h @@ int64_t t_attempt_ = 0; @@ int64_t t_attempt_ = 1; @@ (init) begin() sets it before expired() reads it
+
+# ---- beam_logic.h
+hhj-sensor/beam_logic.h @@ if (now_ms < now_) now_ms = now_;                      // G-8 @@ if (now_ms <= now_) now_ms = now_;                      // G-8 @@ (identity) for equal values the assignment changes nothing
+hhj-sensor/beam_logic.h @@ int64_t t_edge = 0;       // time of the last break edge @@ int64_t t_edge = 1;       // time of the last break edge @@ (init) only read while the beam is, or just was, broken - a break edge has set it by then
+hhj-sensor/beam_logic.h @@ int64_t t_release_ = 0;        // when the last real break (>= min_pulse_ms) ended @@ int64_t t_release_ = 1;        // when the last real break (>= min_pulse_ms) ended @@ (init) only read in the quiet time after an event; the event's two beams are released - which sets it - before both can be free
+
+# ---- outbox.h
+hhj-sensor/outbox.h @@ if (age <= 0) return 0; @@ if (age < 0) return 0; @@ (identity) an age of 0 converts to 0 on the other path too
+hhj-sensor/outbox.h @@ return age > 4294967295LL ? 4294967295u : static_cast<uint32_t>(age); @@ return age >= 4294967295LL ? 4294967295u : static_cast<uint32_t>(age); @@ (identity) at exactly the maximum both paths return the maximum
+hhj-sensor/outbox.h @@ if (i.acked && (it == nullptr || i.seq < it->seq)) it = &i; @@ if (i.acked && (it == nullptr || i.seq <= it->seq)) it = &i; @@ (unique) sequence numbers are unique: two items never compare equal
+hhj-sensor/outbox.h @@ if (it == nullptr || i.seq < it->seq) it = &i; @@ if (it == nullptr || i.seq <= it->seq) it = &i; @@ (unique) sequence numbers are unique: two items never compare equal
+hhj-sensor/outbox.h @@ if (i.used && i.next_ms <= now_ms && (best == nullptr || i.seq > best->seq)) best = &i; @@ if (i.used && i.next_ms <= now_ms && (best == nullptr || i.seq >= best->seq)) best = &i; @@ (unique) sequence numbers are unique: two items never compare equal
+hhj-sensor/outbox.h @@ uint32_t seq = 0; @@ uint32_t seq = 1; @@ (init) every look at an item's seq is guarded by `used`, and push() assigns it
+hhj-sensor/outbox.h @@ int64_t next_ms = 0;      // when the next copy is due @@ int64_t next_ms = 1;      // when the next copy is due @@ (init) push() assigns it before the item can be polled
+
+# ---- display.h
+hhj-timer/include/display.h @@ if (ms < 0) ms = 0;                                               // D-4 @@ if (ms <= 0) ms = 0;                                               // D-4 @@ (identity) 0 is set to 0
+hhj-timer/include/display.h @@ if (ms < 0) ms = 0;                                               // D-4 @@ if (ms < 1) ms = 0;                                               // D-4 @@ (identity) 0 is set to 0
+hhj-timer/include/display.h @@ if (ms < 0) ms = 0;                                               // D-4 @@ if (ms < 0) ms = 1;                                               // D-4 @@ 1 ms is displayed as 0.00, exactly like 0 ms
+hhj-timer/include/display.h @@ if (total > 99 * 60 + 59) total = 99 * 60 + 59; @@ if (total >= 99 * 60 + 59) total = 99 * 60 + 59; @@ (identity) 99:59 is set to 99:59
+hhj-timer/include/display.h @@ if (total > 99 * 60 + 59) total = 99 * 60 + 59; @@ if (total > 99 * 60 + 58) total = 99 * 60 + 59; @@ (identity) the only additional value affected is 99:59, which is set to 99:59
+
+# ---- stopwatch.h
+hhj-timer/include/stopwatch.h @@ if (now_ms > floor_) floor_ = now_ms; @@ if (now_ms >= floor_) floor_ = now_ms; @@ (identity) for equal values the assignment changes nothing
+hhj-timer/include/stopwatch.h @@ return ms < 0 ? 0 : ms; @@ return ms <= 0 ? 0 : ms; @@ (identity) 0 is returned as 0 either way
+hhj-timer/include/stopwatch.h @@ return ms < 0 ? 0 : ms; @@ return ms < 1 ? 0 : ms; @@ (identity) 0 is returned as 0 either way
+hhj-timer/include/stopwatch.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 1, seq = 0; @@ (init) a default Key is the operator's key (gate == false); its boot and seq are never compared
+hhj-timer/include/stopwatch.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 0, seq = 1; @@ (init) a default Key is the operator's key (gate == false); its boot and seq are never compared
+hhj-timer/include/stopwatch.h @@ int64_t edge = 0; @@ int64_t edge = 1; @@ (init) an unused slot's edge is never read: every use is guarded by `used`
+hhj-timer/include/stopwatch.h @@ if (key.seq < last_start_.seq) return Outcome::Old;                      // S-6 @@ if (key.seq <= last_start_.seq) return Outcome::Old;                      // S-6 @@ (identity) the equal case has already returned in the branch just above
+hhj-timer/include/stopwatch.h @@ if (slot == kNone || fins_[i].edge < fins_[slot].edge) slot = i; @@ if (slot == kNone || fins_[i].edge <= fins_[slot].edge) slot = i; @@ (unique) only differs for two remembered FINISHes with exactly the same edge: whichever of the two makes room, every result stays the same
+hhj-timer/include/stopwatch.h @@ if (best == kNone || fins_[i].edge < fins_[best].edge) best = i; @@ if (best == kNone || fins_[i].edge <= fins_[best].edge) best = i; @@ (unique) only differs for two FINISHes with exactly the same edge: whichever of the two is chosen, the result is the same
+hhj-timer/include/stopwatch.h @@ bool run_by_gate_ = false;      // ... and it is last_start_ (not an operator start) @@ bool run_by_gate_ = true;      // ... and it is last_start_ (not an operator start) @@ (init) only read while run_ is true, and every START sets it together with run_
+hhj-timer/include/stopwatch.h @@ int64_t t_start_ = 0; @@ int64_t t_start_ = 1; @@ (init) only read while run_ is true, after a START has set it
+hhj-timer/include/stopwatch.h @@ int64_t t_shown_ = 0; @@ int64_t t_shown_ = 1; @@ (init) only meaningful in the Finished state, after choose() has set it
+
+# ---- link.h
+hhj-common/include/hhj/link.h @@ const size_t n = strnlen(fw, kFwMax + 1); @@ const size_t n = strnlen(fw, kFwMax + 2); @@ the limit only has to be larger than kFwMax; every fw string is NUL-terminated within kFwMax + 1 bytes
+hhj-common/include/hhj/link.h @@ int64_t v = 0; @@ int64_t v = 1; @@ (init) get_int() assigns it on success, and on failure the function returns before using it
+hhj-common/include/hhj/link.h @@ size_t n = 0; @@ size_t n = 1; @@ (init) get_token() assigns it on success, and on failure the function returns before using it
+hhj-common/include/hhj/link.h @@ int64_t age = 0, boot = 0, seq = 0;          // required: always overwritten below @@ int64_t age = 1, boot = 0, seq = 0;          // required: always overwritten below @@ (init) a required field: decode() returns false unless req_int() has overwritten it
+hhj-common/include/hhj/link.h @@ int64_t age = 0, boot = 0, seq = 0;          // required: always overwritten below @@ int64_t age = 0, boot = 1, seq = 0;          // required: always overwritten below @@ (init) a required field: decode() returns false unless req_int() has overwritten it
+hhj-common/include/hhj/link.h @@ int64_t age = 0, boot = 0, seq = 0;          // required: always overwritten below @@ int64_t age = 0, boot = 0, seq = 1;          // required: always overwritten below @@ (init) a required field: decode() returns false unless req_int() has overwritten it
+hhj-common/include/hhj/link.h @@ int64_t boot = 0;                            // required: always overwritten below @@ int64_t boot = 1;                            // required: always overwritten below @@ (init) a required field: decode() returns false unless req_int() has overwritten it
+hhj-common/include/hhj/link.h @@ int64_t boot = 0, seq = 0;                     // required: always overwritten below @@ int64_t boot = 1, seq = 0;                     // required: always overwritten below @@ (init) a required field: decode() returns false unless req_int() has overwritten it
+hhj-common/include/hhj/link.h @@ int64_t boot = 0, seq = 0;                     // required: always overwritten below @@ int64_t boot = 0, seq = 1;                     // required: always overwritten below @@ (init) a required field: decode() returns false unless req_int() has overwritten it
+
+# ---- net.h
+hhj-common/include/hhj/net.h @@ if (v < 0) return 0; @@ if (v <= 0) return 0; @@ (identity) 0 converts to 0 on the other path too
+hhj-common/include/hhj/net.h @@ if (v < 0) return 0; @@ if (v < 1) return 0; @@ (identity) 0 converts to 0 on the other path too
+hhj-common/include/hhj/net.h @@ return v > 4294967295LL ? 4294967295u : static_cast<uint32_t>(v); @@ return v >= 4294967295LL ? 4294967295u : static_cast<uint32_t>(v); @@ (identity) at exactly the maximum both paths return the maximum
+hhj-common/include/hhj/net.h @@ if (v < -128) return -128; @@ if (v <= -128) return -128; @@ (identity) -128 is returned as -128 either way
+hhj-common/include/hhj/net.h @@ if (v < -128) return -128; @@ if (v < -127) return -128; @@ (identity) the only additional value affected is -128, which is returned as -128
+hhj-common/include/hhj/net.h @@ if (v > 127) return 127; @@ if (v >= 127) return 127; @@ (identity) 127 is returned as 127 either way
+hhj-common/include/hhj/net.h @@ if (v > 127) return 127; @@ if (v > 126) return 127; @@ (identity) the only additional value affected is 127, which is returned as 127
+hhj-common/include/hhj/net.h @@ uint32_t ip = 0; @@ uint32_t ip = 1; @@ (init) an unused slot's address is never read: every use is guarded by `used`
+hhj-common/include/hhj/net.h @@ int64_t seen_ms = 0; @@ int64_t seen_ms = 1; @@ (init) an unused slot's time is never read: every use is guarded by `used`
+hhj-common/include/hhj/net.h @@ if (slot == nullptr || p.seen_ms < slot->seen_ms) slot = &p; @@ if (slot == nullptr || p.seen_ms <= slot->seen_ms) slot = &p; @@ (unique) only differs for two peers silent for exactly the same time: either of them may make room
+
+# ---- gate_app.h
+hhj-sensor/gate_app.h @@ if (ticked_ && now - last_tick_ > max_gap_ms_) max_gap_ms_ = now - last_tick_; @@ if (ticked_ && now - last_tick_ >= max_gap_ms_) max_gap_ms_ = now - last_tick_; @@ (identity) for equal values the assignment changes nothing
+hhj-sensor/gate_app.h @@ static_cast<unsigned long>(seq), static_cast<long long>(ev.t_ms), ev.dir > 0 ? "A->B" : "B->A", @@ static_cast<unsigned long>(seq), static_cast<long long>(ev.t_ms), ev.dir >= 0 ? "A->B" : "B->A", @@ (unique) GateLogic reports dir +1 or -1, never 0
+hhj-sensor/gate_app.h @@ uint32_t from = 0; @@ uint32_t from = 1; @@ (init) the HAL fills it in for every datagram it returns
+hhj-sensor/gate_app.h @@ int64_t last_tick_ = 0; @@ int64_t last_tick_ = 1; @@ (init) only read when ticked_ is true, after the first tick has set it
+hhj-sensor/gate_app.h @@ int64_t next_hello_ms_ = 0; @@ int64_t next_hello_ms_ = 1; @@ (init) set when the link comes up, which is before a HELLO can be due
+hhj-sensor/gate_app.h @@ int64_t next_status_ms_ = 0; @@ int64_t next_status_ms_ = 1; @@ (init) begin() sets it
+hhj-sensor/gate_app.h @@ int64_t t_break_a_ = 0, t_break_b_ = 0; @@ int64_t t_break_a_ = 1, t_break_b_ = 0; @@ (init) set at the break edge, read at the release edge that follows it
+hhj-sensor/gate_app.h @@ int64_t t_break_a_ = 0, t_break_b_ = 0; @@ int64_t t_break_a_ = 0, t_break_b_ = 1; @@ (init) set at the break edge, read at the release edge that follows it
+
+# ---- timer_app.h
+hhj-timer/include/timer_app.h @@ bool have = false; @@ bool have = true; @@ (init) the link is down at power-up, and a down link sets it to false before anything reads it
+hhj-timer/include/timer_app.h @@ int64_t seen_ms = 0; @@ int64_t seen_ms = 1; @@ (init) only read while have is true, after a HELLO has set it
+hhj-timer/include/timer_app.h @@ uint32_t st = 0; @@ uint32_t st = 1; @@ (init) only read while have is true, after a HELLO has set it
+hhj-timer/include/timer_app.h @@ uint32_t from = 0; @@ uint32_t from = 1; @@ (init) the HAL fills it in for every datagram it returns
+hhj-timer/include/timer_app.h @@ const bool news = o == Stopwatch::Outcome::Started || o == Stopwatch::Outcome::Restarted || @@ const bool news = o == Stopwatch::Outcome::Started && o == Stopwatch::Outcome::Restarted || @@ a START that starts the clock is always the first copy of its event to be reported, so it is logged through first_time_reported() just the same
+hhj-timer/include/timer_app.h @@ seen_next_ = (seen_next_ + 1) % kSeen; @@ seen_next_ = (seen_next_ - 1) % kSeen; @@ (unique) the ring is walked in the other direction; it still overwrites its oldest entry
+hhj-timer/include/timer_app.h @@ int64_t t_boot_ = 0; @@ int64_t t_boot_ = 1; @@ (init) begin() sets it
+hhj-timer/include/timer_app.h @@ int64_t lamp_until_ = 0; @@ int64_t lamp_until_ = 1; @@ only differs at clock value 0, the first instant of the power-up self-test, which shows the same 8888
+hhj-timer/include/timer_app.h @@ int64_t next_hello_ms_ = 0; @@ int64_t next_hello_ms_ = 1; @@ (init) set when the link comes up, which is before a HELLO can be due
+hhj-timer/include/timer_app.h @@ bool used = false; @@ bool used = true; @@ (init) an unset entry has mark None, which no event carries, so it never matches
+hhj-timer/include/timer_app.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 1, seq = 0; @@ (init) an unset entry has mark None, which no event carries, so it never matches
+hhj-timer/include/timer_app.h @@ uint32_t boot = 0, seq = 0; @@ uint32_t boot = 0, seq = 1; @@ (init) an unset entry has mark None, which no event carries, so it never matches
+hhj-timer/include/timer_app.h @@ size_t seen_next_ = 0; @@ size_t seen_next_ = 1; @@ (init) it does not matter at which slot the ring starts
+hhj-timer/include/timer_app.h @@ int64_t t_shown_ = 0; @@ int64_t t_shown_ = 1; @@ (init) only read when shown_valid_ is true, after the first frame has set it

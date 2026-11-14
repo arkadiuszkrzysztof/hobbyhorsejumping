@@ -1,0 +1,90 @@
+{
+  "folders": [
+    { "name": "hhj-sensor", "path": "hhj-sensor" },
+    { "name": "hhj-backend", "path": "hhj-backend" },
+    { "name": "hhj-frontend", "path": "hhj-frontend" },
+    { "name": "hhj-timer", "path": "hhj-timer" },
+    { "name": "hhj-common", "path": "hhj-common" },
+    { "name": "repo root (Makefile, README)", "path": "." }
+  ],
+  "settings": {
+    // The last folder is the repo root, so that Makefile / README are at hand.
+    // Hide the projects inside it: they are already listed above.
+    "files.exclude": {
+      "hhj-sensor": true,
+      "hhj-timer": true,
+      "hhj-common": true,
+      "hhj-backend": true,
+      "hhj-frontend": true,
+      "**/.DS_Store": true
+    },
+    "search.exclude": {
+      "build": true,
+      "**/.pio": true,
+      "**/.venv": true,
+      "**/node_modules": true
+    },
+    "files.associations": { "*.ino": "cpp" },
+    "python.defaultInterpreterPath": "${workspaceFolder:hhj-backend}/.venv/bin/python"
+  },
+  "extensions": {
+    "recommendations": ["platformio.platformio-ide", "ms-python.python"]
+  },
+  // Terminal > Run Task... (or Cmd+Shift+B for the default build, "Run Test Task" for the default test).
+  // Every task is a target of the Makefile in the repo root, so the terminal gives the same results.
+  // The firmware envs (start / finish / stoper / test) are also in the PlatformIO side bar as before.
+  "tasks": {
+    "version": "2.0.0",
+    "options": { "cwd": "${workspaceFolder:hhj-common}/.." },
+    "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+    "problemMatcher": [],
+    "tasks": [
+      {
+        "label": "HHJ: test everything",
+        "type": "shell",
+        "command": "make test",
+        "group": { "kind": "test", "isDefault": true },
+        "problemMatcher": ["$gcc"]
+      },
+      { "label": "HHJ: test firmware logic (host)", "type": "shell", "command": "make test-firmware", "group": "test", "problemMatcher": ["$gcc"] },
+      { "label": "HHJ: test backend", "type": "shell", "command": "make test-backend", "group": "test" },
+      { "label": "HHJ: test gate <-> backend link", "type": "shell", "command": "make test-link", "group": "test" },
+      { "label": "HHJ: coverage of firmware logic", "type": "shell", "command": "make coverage", "group": "test" },
+      { "label": "HHJ: mutation test (slow)", "type": "shell", "command": "make mutation", "group": "test" },
+
+      {
+        "label": "HHJ: build all firmware",
+        "type": "shell",
+        "command": "make build",
+        "group": { "kind": "build", "isDefault": true },
+        "problemMatcher": ["$gcc"]
+      },
+      { "label": "HHJ: flash START gate", "type": "shell", "command": "make flash-start", "group": "build", "problemMatcher": ["$gcc"] },
+      { "label": "HHJ: flash FINISH gate", "type": "shell", "command": "make flash-finish", "group": "build", "problemMatcher": ["$gcc"] },
+      { "label": "HHJ: flash timer", "type": "shell", "command": "make flash-timer", "group": "build", "problemMatcher": ["$gcc"] },
+      { "label": "HHJ: flash timer soldering test", "type": "shell", "command": "make flash-timer-test", "group": "build", "problemMatcher": ["$gcc"] },
+      { "label": "HHJ: serial monitor - gate", "type": "shell", "command": "make monitor-sensor", "isBackground": true },
+      { "label": "HHJ: serial monitor - timer", "type": "shell", "command": "make monitor-timer", "isBackground": true },
+
+      { "label": "HHJ: run backend (HTTP 3003 + UDP 3004)", "type": "shell", "command": "make backend", "isBackground": true },
+      { "label": "HHJ: run frontend", "type": "shell", "command": "make frontend", "isBackground": true },
+      {
+        "label": "HHJ: run backend + frontend",
+        "dependsOn": ["HHJ: run backend (HTTP 3003 + UDP 3004)", "HHJ: run frontend"],
+        "dependsOrder": "parallel"
+      },
+      {
+        "label": "HHJ: simulate a START crossing (no hardware)",
+        "type": "shell",
+        "command": "make sim && ./build/hhj-gate-sim gate --mode START --peer 127.0.0.1:3004 --cross 300",
+        "detail": "Needs the backend running on this machine."
+      },
+      {
+        "label": "HHJ: simulate a FINISH crossing (no hardware)",
+        "type": "shell",
+        "command": "make sim && ./build/hhj-gate-sim gate --mode FINISH --peer 127.0.0.1:3004 --cross 300",
+        "detail": "Needs the backend running on this machine."
+      }
+    ]
+  }
+}

@@ -1,65 +1,65 @@
-# WiFiScan Example
+# hhj-sensor v2.1 — two-beam gate
 
-This example demonstrates how to use the Wi-Fi library to scan available Wi-Fi networks and print the results.
+One firmware, built twice: `start` and `finish` (the only difference is the
+name the gate reports). Overview of the whole system: [../README.md](../README.md).
 
-## Supported Targets
+| File             | What it does                                           | Tested by                |
+|------------------|--------------------------------------------------------|--------------------------|
+| `beam_logic.h`   | decides when a rider crossed (pure C++)                | `test/test_beam_logic.cpp` |
+| `outbox.h`       | repeats every event until it is delivered              | `test/test_outbox.cpp`   |
+| `gate_app.h`     | LEDs, log, the conversation on the network             | `test/test_gate_app.cpp` |
+| `hhj-sensor.ino` | glue only: pins, WiFi, UDP socket, serial              | — (keep it free of logic) |
 
-Currently, this example supports the following targets.
+Shared with the timer, in `../hhj-common`: WiFi plan, link protocol.
 
-| Supported Targets | ESP32 | ESP32-S2 | ESP32-C3 | ESP32-S3 | ESP32-C6 |
-| ----------------- | ----- | -------- | -------- | -------- | -------- |
+## Wiring
 
-## How to Use Example
+Receiver A → GPIO2 (D2, `SIGNAL_IR` in v1), receiver B → GPIO4 (D4);
+`INPUT_PULLUP`, open collector, beam cut = LOW. LEDs as in v1: GPIO21 blue
+(WiFi), GPIO23 red (beams). All four pins can be overridden with `-D` in
+`platformio.ini`.
 
-* How to install the Arduino IDE: [Install Arduino IDE](https://github.com/espressif/arduino-esp32/tree/master/docs/arduino-ide).
+Every event reports which beam was cut first (`dir=A->B` or `B->A`) and the
+time between the two beams.
 
-#### Using Arduino IDE
+## LEDs
 
-* Before Compile/Verify, select the correct board: `Tools -> Board`.
-* Select the COM port: `Tools -> Port: xxx` where the `xxx` is the detected COM port.
+| LED  | blinking slowly                   | on               | off                  | blinking fast            |
+|------|-----------------------------------|------------------|----------------------|--------------------------|
+| blue | looking for WiFi                  | connected        | —                    | —                        |
+| red  | a beam was never free since power-up (align the emitters) | both beams free  | a beam is cut now | a beam cut for > 5 s (obstacle?) |
 
-#### Using Platform IO
+## What counts as a crossing
 
-* Select the COM port: `Devices` or setting the `upload_port` option on the `platformio.ini` file.
+Both beams cut for at least 20 ms each, their cuts at most 150 ms apart, both
+still cut at that moment. The reported time is the cut of the *first* beam.
+After a crossing the gate ignores everything until both beams have been free
+for 1.5 s (one rider = one event). The numbers are `GateConfig` in
+`beam_logic.h`; the exact rules are the `G-1 … G-8` list at the top of that file.
 
-## Example/Log Output
+## Build, flash, watch
+
+From the repo root: `make flash-start`, `make flash-finish`, `make monitor-sensor`
+(or in this folder: `pio run -e start -t upload`, `pio device monitor`).
+
+The serial log (115200) has one line per thing that happened, each starting
+with the milliseconds since power-up:
 
 ```
-Setup done
-Scan start
-Scan done
-17 networks found
-Nr | SSID            | RSSI | CH | Encryption
- 1 | IoTNetwork      |  -62 |  1 | WPA2
- 2 | WiFiSSID        |  -62 |  1 | WPA2-EAP
- 3 | B3A7992         |  -63 |  6 | WPA+WPA2
- 4 | WiFi            |  -63 |  6 | WPA3
- 5 | IoTNetwork2     |  -64 | 11 | WPA2+WPA3
-...
+[   5000] A broken
+[   5040] B broken
+[   5060] EVENT #1 t=5000 dir=A->B gap=40 ms (lone A/B 0/0, short 0)
+[   5060] event #1 sent, 60 ms after the cut, to 2 peer(s) + broadcast
+[   5063] event #1 confirmed by backend
+[   5250] A free after 250 ms
+[   6790] gate armed
 ```
 
-## Troubleshooting
+Also logged: every single-beam break (`B alone: no A within 150 ms -> ignored`),
+breaks that were too short, WiFi changes, peers found and lost, and every 30 s a
+one-line health summary (events, unconfirmed events, longest pause of the
+measuring loop, bad datagrams, failed sends).
 
-***Important: Be sure you're using a good quality USB cable and you have enough power source for your project.***
+## Tests
 
-* **Programming Fail:** If the programming/flash procedure fails, try to reduce the serial connection speed.
-* **COM port not detected:** Check the USB cable connection and the USB to Serial driver installation.
-
-If the error persists, you can ask for help at the official [ESP32 forum](https://esp32.com) or see [Contribute](#contribute).
-
-## Contribute
-
-To know how to contribute to this project, see [How to contribute.](https://github.com/espressif/arduino-esp32/blob/master/CONTRIBUTING.rst)
-
-If you have any **feedback** or **issue** to report on this example/library, please open an issue or fix it by creating a new PR. Contributions are more than welcome!
-
-Before creating a new issue, be sure to try the Troubleshooting and to check if the same issue was already created by someone else.
-
-## Resources
-
-* Arduino-ESP32 Official Repository: [espressif/arduino-esp32](https://github.com/espressif/arduino-esp32)
-* ESP32 Datasheet: [Link to datasheet](https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf)
-* ESP32-S2 Datasheet: [Link to datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-s2_datasheet_en.pdf)
-* ESP32-C3 Datasheet: [Link to datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-c3_datasheet_en.pdf)
-* ESP32-C6 Datasheet: [Link to datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-c6_datasheet_en.pdf)
-* Official ESP-IDF documentation: [ESP-IDF](https://idf.espressif.com)
+`make test-firmware` from the repo root (no hardware needed).

@@ -1,0 +1,7 @@
+{
+  // .ino jako C++ + Arduino.h dla IntelliSense (sam build robi to PlatformIO)
+  "files.associations": { "*.ino": "cpp" },
+  "C_Cpp.default.forcedInclude": [
+    "${env:HOME}/.platformio/packages/framework-arduinoespressif32/cores/esp32/Arduino.h"
+  ]
+}
