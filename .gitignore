@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# Python byte code
+__pycache__/
+
 # host test / coverage / simulator output (make test, make coverage, make sim)
 /build/
 

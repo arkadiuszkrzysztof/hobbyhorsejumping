@@ -9,18 +9,15 @@ class TimeReading(models.Model):
   sensor_time: best estimate of the cut = min over received copies of
                (arrival - age_ms).
   server_time: arrival of the first copy.
-  Gate events are identified by (time_mark, gate_boot, gate_seq); manual /
-  legacy HTTP readings have no identity (gate_boot/gate_seq are NULL).
+  A gate event is identified by (time_mark, gate_boot, gate_seq). Those two
+  are NULL only in rows stored by the first version of the system.
   """
   class TimeMark(models.TextChoices):
     START = 'START'
     FINISH = 'FINISH'
-    COMBINED = 'COMBINED'
-    FAULTY_READING = 'FAULTY_READING'
   id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
   # the run this signal was captured for (operator console); null = nobody was being timed
   run = models.ForeignKey('Run', null=True, blank=True, on_delete=models.SET_NULL, related_name='readings')
-  competition_start = models.ForeignKey(CompetitionStart, null=True, blank=True, on_delete=models.SET_NULL)  # v1, unused
   sensor_time = models.BigIntegerField()
   server_time = models.BigIntegerField()
   time_mark = models.CharField(max_length=100, choices=TimeMark.choices)
@@ -41,11 +38,7 @@ class TimeReading(models.Model):
     ]
 
   def __str__(self):
-    text = f'{self.time_mark} - {self.sensor_time}'
-    cs = self.competition_start
-    if cs is not None:
-      text += f' ({cs.competition.name} - {cs.participant.name})'
-    return text
+    return f'{self.time_mark} - {self.sensor_time}'
 
 
 class Run(models.Model):

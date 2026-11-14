@@ -66,6 +66,8 @@ where pipenv >nul 2>&1 || (echo pipenv was not found. Install it with:  pip inst
 call pipenv sync || goto failed
 copy /y Pipfile.lock .venv\.hhj-lock >nul
 :backend_run
+rem  A migration can drop tables and columns, so a copy of the database is kept from before one.
+if exist db.sqlite3 "%PY%" manage.py migrate --check >nul 2>&1 || "%PY%" -c "import shutil, time; shutil.copy2('db.sqlite3', time.strftime('db.before-migration-%%Y%%m%%d-%%H%%M%%S.sqlite3'))"
 "%PY%" manage.py migrate || goto failed
 echo.
 echo HHJ backend on http://localhost:3003 - gates and display on UDP 3004.

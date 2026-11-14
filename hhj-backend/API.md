@@ -104,4 +104,9 @@ possible right now), each with `{"error": "human readable"}`.
 { "type": "devices", "server_time": 1794000000000, "devices": [ … ] } // every 2 s
 ```
 
-`/ws/timings/` (every raw gate signal as it is stored) is unchanged.
+## Looking at what the server sees
+
+Two read-only lists outside `/api`, for checking the hardware side with `curl`
+or a browser: `GET /timereadings/?limit=100` (the raw gate signals as stored,
+newest first) and `GET /devices/` (gates and display with their status, and
+the UDP link's counters).

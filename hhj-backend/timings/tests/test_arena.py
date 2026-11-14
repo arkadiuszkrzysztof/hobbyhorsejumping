@@ -6,7 +6,7 @@ from django.test import TestCase
 
 from events.models import Competition, CompetitionStart, Participant
 from timings import arena, link
-from timings.ingest import ingest_event, ingest_legacy
+from timings.ingest import ingest_event
 from timings.models import Run, TimeReading
 from timings.tests.helpers import event
 
@@ -19,7 +19,7 @@ class ArenaCase(TestCase):
         patcher = mock.patch('timings.arena.now_ms', side_effect=lambda: self.clock)
         patcher.start()
         self.addCleanup(patcher.stop)
-        for target in ('timings.live.publish', 'timings.live.publish_states', 'timings.udp_link.kick_display'):
+        for target in ('timings.live.publish_states', 'timings.udp_link.kick_display'):
             p = mock.patch(target)
             setattr(self, target.rsplit('.', 1)[1], p.start())
             self.addCleanup(p.stop)
@@ -53,8 +53,6 @@ class CompetitionTests(ArenaCase):
     def test_a_name_is_all_a_competition_needs(self):
         c = Competition.objects.get(pk=self.c.pk)
         self.assertEqual((c.name, c.fence_count), ('Saturday open', 12))
-        self.assertIsNone(c.event)
-        self.assertIsNone(c.course)
         self.assertEqual(str(c)[:13], 'Saturday open')
 
     def test_name_and_fence_count_are_validated(self):
@@ -359,15 +357,6 @@ class CaptureTests(ArenaCase):
         late, _ = ingest_event(event('START', boot=1, seq=9, age_ms=58_000), T0 + 60_000, '10.0.0.1')
         late.refresh_from_db()
         self.assertEqual((late.run_id, late.sensor_time), (run.pk, T0 + 2000))
-
-    def test_manual_http_reading_counts_like_a_gate_signal(self):
-        (a,) = self.add('Ala')
-        run = self.open_session(a)
-        self.clock = T0 + 100
-        with mock.patch('timings.ingest.now_ms', return_value=T0 + 100):
-            reading = ingest_legacy('START')
-        reading.refresh_from_db()
-        self.assertEqual(reading.run_id, run.pk)
 
     def test_nearby_signals_outside_the_session_are_offered_but_limited(self):
         (a,) = self.add('Ala')

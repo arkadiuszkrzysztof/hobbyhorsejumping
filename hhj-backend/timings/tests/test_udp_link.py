@@ -15,9 +15,6 @@ from timings.udp_link import LinkServer
 
 class LinkServerTests(TransactionTestCase):
     def setUp(self):
-        patcher = mock.patch('timings.live.publish')
-        self.publish = patcher.start()
-        self.addCleanup(patcher.stop)
         self.registry = DeviceRegistry()
         # drive_displays=False: these tests are about the gate side of the link; the
         # display side (SHOW datagrams to timers) has its own tests in test_display.py
@@ -60,7 +57,6 @@ class LinkServerTests(TransactionTestCase):
         self.assertLessEqual(r.sensor_time, r.server_time - 20)
         self.assertEqual(self.server.stats['events'], 1)
         wait_for(lambda: self.server.stats['acks_sent'] == 1, msg='acks_sent')  # counted after sendto
-        self.publish.assert_called_once()
 
     def test_duplicate_acked_one_row(self):
         for n in range(3):
@@ -70,7 +66,6 @@ class LinkServerTests(TransactionTestCase):
         self.assertEqual(TimeReading.objects.count(), 1)
         self.assertEqual(TimeReading.objects.get().copies, 3)
         self.assertEqual((self.server.stats['events'], self.server.stats['duplicates']), (1, 2))
-        self.publish.assert_called_once()
 
     def test_stale_not_acked_not_stored(self):
         self.client.send(event(age_ms=600_001))
@@ -124,7 +119,6 @@ class LinkServerTests(TransactionTestCase):
             acks.add((msg.mark, msg.seq))
         self.assertEqual(TimeReading.objects.filter(gate_boot=42).count(), count)
         wait_for(lambda: self.server.stats['acks_sent'] == count, msg='acks_sent')
-        self.assertEqual(self.publish.call_count, count)
 
     def test_stats_count_datagrams(self):
         self.client.send(b'x')
@@ -179,12 +173,11 @@ class LinkServerLifecycleTests(TransactionTestCase):
 
 class HhjSendCommandTests(TransactionTestCase):
     def test_plays_a_gate(self):
-        with mock.patch('timings.live.publish'):
-            server = LinkServer(LOCAL, 0, registry=DeviceRegistry()).start()
-            self.addCleanup(server.stop)
-            out = io.StringIO()
-            call_command('hhj_send', 'FINISH', '--to', LOCAL, '--port', str(server.port),
-                         '--boot', '1234', '--seq', '5', '--age', '40', '--wait', '0.3', stdout=out)
+        server = LinkServer(LOCAL, 0, registry=DeviceRegistry()).start()
+        self.addCleanup(server.stop)
+        out = io.StringIO()
+        call_command('hhj_send', 'FINISH', '--to', LOCAL, '--port', str(server.port),
+                     '--boot', '1234', '--seq', '5', '--age', '40', '--wait', '0.3', stdout=out)
         r = TimeReading.objects.get()
         self.assertEqual((r.time_mark, r.gate_boot, r.gate_seq, r.copies), ('FINISH', 1234, 5, 7))
         self.assertLessEqual(r.sensor_time, r.server_time - 40)

@@ -17,7 +17,6 @@ from channels.layers import get_channel_layer
 
 log = logging.getLogger(__name__)
 
-LIVE_TIMINGS_LISTENERS_GROUP_NAME = 'live_timings_listeners'
 LIVE_ALL_GROUP = 'live_all'                      # every operator console
 
 
@@ -54,11 +53,6 @@ class CaptureLoop:
 def _log_failure(fut):
     if not fut.cancelled() and fut.exception() is not None:
         log.error('live publish failed: %r', fut.exception())
-
-
-def publish(message):
-    """Send one serialized TimeReading to every live-timings listener."""
-    _group_send(LIVE_TIMINGS_LISTENERS_GROUP_NAME, {'type': 'send_timings', 'message': message})
 
 
 # --- operator console (/ws/live/<competition>/) --------------------------------

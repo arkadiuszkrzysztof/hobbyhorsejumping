@@ -178,7 +178,6 @@ class GateAgainstBackendTests(TransactionTestCase):
         self.assertEqual((r.time_mark, r.gate_boot, r.gate_seq, r.direction), ('START', 4242, 1, 1))
         self.assertTrue(25 <= r.gap_ms <= 40, r.gap_ms)            # beam B is scripted 30 ms after beam A
         self.assertGreaterEqual(r.copies, 7)                       # the whole burst arrived (unicast + "broadcast")
-        self.assertIsNone(r.competition_start)
         # ...at the right moment: the gate said when the beam was cut (its wall clock), the
         # backend reconstructed it from arrival - age. Same machine, so they must agree closely.
         self.assertLess(abs(r.sensor_time - edge), 25, (r.sensor_time, edge))
@@ -238,7 +237,7 @@ class DisplayAgainstBackendTests(TransactionTestCase):
         from unittest import mock
         from timings import arena, udp_link
         arena._set_last_result(None)
-        for target in ('timings.live.publish', 'timings.live.publish_states', 'timings.live.publish_devices'):
+        for target in ('timings.live.publish_states', 'timings.live.publish_devices'):
             p = mock.patch(target)
             p.start()
             self.addCleanup(p.stop)

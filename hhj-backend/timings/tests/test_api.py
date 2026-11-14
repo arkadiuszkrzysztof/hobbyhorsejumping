@@ -18,7 +18,7 @@ STATE_KEYS = {'server_time', 'competition', 'entries', 'selected_entry', 'sessio
 class ApiCase(TestCase):
     def setUp(self):
         self.api = APIClient()
-        for target in ('timings.live.publish', 'timings.live.publish_states', 'timings.udp_link.kick_display'):
+        for target in ('timings.live.publish_states', 'timings.udp_link.kick_display'):
             p = mock.patch(target)
             setattr(self, target.rsplit('.', 1)[1], p.start())
             self.addCleanup(p.stop)

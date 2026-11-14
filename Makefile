@@ -110,7 +110,10 @@ $(PY): $(BACKEND)/Pipfile.lock
 
 backend-venv: $(PY)
 
+# A migration can drop tables and columns, so a copy of the database is kept from before one.
 backend-migrate: $(PY)
+	@cd $(BACKEND) && if [ -z "$$HHJ_DB" ] && [ -f db.sqlite3 ] && ! $(PY) manage.py migrate --check >/dev/null 2>&1; then \
+	  $(PY) -c "import shutil, time; n = time.strftime('db.before-migration-%Y%m%d-%H%M%S.sqlite3'); shutil.copy2('db.sqlite3', n); print('database changes ahead - copy kept as hhj-backend/' + n)"; fi
 	cd $(BACKEND) && $(PY) manage.py migrate
 
 backend: backend-migrate

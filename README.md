@@ -133,6 +133,9 @@ firmware environments (`start`, `finish`, `stoper`, `test`).
 
 `make backend` creates `hhj-backend/.venv` from `Pipfile.lock` on first use,
 `make frontend` installs the npm packages of `hhj-frontend` on first use.
+Before a change to the database layout is applied, `make backend` and
+`start-hhj.bat` keep a copy of the database next to it
+(`hhj-backend/db.before-migration-<date>.sqlite3`).
 
 ## How it is tested
 

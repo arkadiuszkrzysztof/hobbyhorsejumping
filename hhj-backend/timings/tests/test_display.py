@@ -12,7 +12,7 @@ from timings.udp_link import LinkServer
 
 class DisplayLinkTests(TransactionTestCase):
     def setUp(self):
-        for target in ('timings.live.publish', 'timings.live.publish_states', 'timings.live.publish_devices'):
+        for target in ('timings.live.publish_states', 'timings.live.publish_devices'):
             p = mock.patch(target)
             p.start()
             self.addCleanup(p.stop)

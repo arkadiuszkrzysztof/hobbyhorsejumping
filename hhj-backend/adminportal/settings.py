@@ -11,7 +11,6 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 import os
-import sys
 import tempfile
 from pathlib import Path
 
@@ -29,9 +28,6 @@ SECRET_KEY = 'django-insecure-y%6iyco@e=$t1-2%^tvwn^$p=4o#5v^@s9p5zk@uz#o@vb&*dq
 DEBUG = True
 
 ALLOWED_HOSTS = ['*']
-
-# django-debug-toolbar refuses to run under `manage.py test` (debug_toolbar.E001).
-TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
 
 
 # Application definition
@@ -59,10 +55,6 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-if not TESTING:
-    INSTALLED_APPS.insert(INSTALLED_APPS.index('rest_framework'), 'debug_toolbar')
-    MIDDLEWARE.append('debug_toolbar.middleware.DebugToolbarMiddleware')
-
 ROOT_URLCONF = 'adminportal.urls'
 
 TEMPLATES = [
@@ -80,8 +72,6 @@ TEMPLATES = [
         },
     },
 ]
-
-WSGI_APPLICATION = 'adminportal.wsgi.application'
 
 ASGI_APPLICATION = 'adminportal.asgi.application'
 
@@ -152,18 +142,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-TEMPLATE_DIRS = (
-    BASE_DIR / 'templates',
-)
-
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-INTERNAL_IPS = [
-  '127.0.0.1',
-]
 
 # The operator console is used without logging in, on the system's own WiFi.
 # No session authentication for the API: otherwise being logged into /admin/ in
