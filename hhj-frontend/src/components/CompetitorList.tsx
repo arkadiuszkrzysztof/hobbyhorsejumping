@@ -17,6 +17,7 @@ import {
 } from '@dnd-kit/sortable'
 import type { Entry, Run } from '../api/types'
 import { sortPenalties } from '../lib/fences'
+import { ranking } from '../lib/ranking'
 import { formatTime } from '../lib/time'
 import { useStore } from '../state/context'
 import { useAsk, useConfirm } from './AskDialog'
@@ -37,6 +38,11 @@ export function CompetitorList() {
     if (!state) return <aside className="competitors" />
 
     const ids = state.entries.map((e) => e.id)
+    const ranked = snap.listOrder === 'ranking'
+    // One row per competitor: its number is the start position, or the place in the ranking.
+    const rows = ranked
+        ? ranking(state.entries).map((r) => ({ entry: r.entry, position: r.place, bestRunId: r.result?.run.id ?? null }))
+        : state.entries.map((entry, i) => ({ entry, position: i + 1, bestRunId: null }))
     const ordering = snap.pending.has('order')
     const sessionEntryId = state.session?.entry_id ?? null
 
@@ -75,26 +81,42 @@ export function CompetitorList() {
 
     return (
         <aside className="competitors" aria-label="Competitors">
-            <h2 className="section-title">
-                Competitors <span className="muted">({state.entries.length})</span>
-            </h2>
+            <div className="list-head">
+                <h2 className="section-title">
+                    Competitors <span className="muted">({state.entries.length})</span>
+                </h2>
+                <div className="segmented" role="group" aria-label="Sort competitors">
+                    <button aria-pressed={!ranked} onClick={() => store.setListOrder('start')}>
+                        Start order
+                    </button>
+                    <button aria-pressed={ranked} onClick={() => store.setListOrder('ranking')}>
+                        Ranking
+                    </button>
+                </div>
+            </div>
+            {ranked && <p className="list-note">Fewest penalties first, then the fastest time. The best run counts.</p>}
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+                <SortableContext items={rows.map((r) => r.entry.id)} strategy={verticalListSortingStrategy}>
                     <ol className="entry-list">
-                        {state.entries.map((entry, i) => (
-                            <EntryRow
-                                key={entry.id}
-                                entry={entry}
-                                position={i + 1}
-                                selected={entry.id === state.selected_entry}
-                                hasSession={entry.id === sessionEntryId}
-                                isFirst={i === 0}
-                                isLast={i === state.entries.length - 1}
-                                ordering={ordering}
-                                onSelect={() => void select(entry)}
-                                onMove={(delta) => move(i, i + delta)}
-                            />
-                        ))}
+                        {rows.map(({ entry, position, bestRunId }) => {
+                            const i = ids.indexOf(entry.id)
+                            return (
+                                <EntryRow
+                                    key={entry.id}
+                                    entry={entry}
+                                    position={position}
+                                    bestRunId={bestRunId}
+                                    reorderable={!ranked}
+                                    selected={entry.id === state.selected_entry}
+                                    hasSession={entry.id === sessionEntryId}
+                                    isFirst={i === 0}
+                                    isLast={i === ids.length - 1}
+                                    ordering={ordering}
+                                    onSelect={() => void select(entry)}
+                                    onMove={(delta) => move(i, i + delta)}
+                                />
+                            )
+                        })}
                     </ol>
                 </SortableContext>
             </DndContext>
@@ -106,7 +128,12 @@ export function CompetitorList() {
 
 interface RowProps {
     entry: Entry
-    position: number
+    /** Start position or place in the ranking; null = not ranked yet. */
+    position: number | null
+    /** The run that counts in the ranking, to mark its chip. */
+    bestRunId: string | null
+    /** False in the ranking: the order is not the operator's to change there. */
+    reorderable: boolean
     selected: boolean
     hasSession: boolean
     isFirst: boolean
@@ -116,14 +143,26 @@ interface RowProps {
     onMove: (delta: number) => void
 }
 
-function EntryRow({ entry, position, selected, hasSession, isFirst, isLast, ordering, onSelect, onMove }: RowProps) {
+function EntryRow({
+    entry,
+    position,
+    bestRunId,
+    reorderable,
+    selected,
+    hasSession,
+    isFirst,
+    isLast,
+    ordering,
+    onSelect,
+    onMove,
+}: RowProps) {
     const [snap, store] = useStore()
     const ask = useAsk()
     const confirm = useConfirm()
     const [editing, setEditing] = useState(false)
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: entry.id,
-        disabled: ordering,
+        disabled: ordering || !reorderable,
     })
     const style = {
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -178,7 +217,13 @@ function EntryRow({ entry, position, selected, hasSession, isFirst, isLast, orde
         }
     }
 
-    const classes = ['entry', selected && 'entry-selected', hasSession && 'entry-session', isDragging && 'entry-dragging']
+    const classes = [
+        'entry',
+        !reorderable && 'entry-ranked',
+        selected && 'entry-selected',
+        hasSession && 'entry-session',
+        isDragging && 'entry-dragging',
+    ]
     return (
         <li
             ref={setNodeRef}
@@ -190,16 +235,20 @@ function EntryRow({ entry, position, selected, hasSession, isFirst, isLast, orde
                 if (!editing && !(e.target as HTMLElement).closest('button, input')) onSelect()
             }}
         >
-            <button
-                className="drag-handle"
-                aria-label={`Drag to reorder ${entry.name}`}
-                disabled={ordering}
-                {...attributes}
-                {...listeners}
-            >
-                ⠿
-            </button>
-            <span className="entry-pos">{position}</span>
+            {reorderable && (
+                <button
+                    className="drag-handle"
+                    aria-label={`Drag to reorder ${entry.name}`}
+                    disabled={ordering}
+                    {...attributes}
+                    {...listeners}
+                >
+                    ⠿
+                </button>
+            )}
+            <span className="entry-pos" title={reorderable ? undefined : position === null ? 'No result yet' : `Place ${position}`}>
+                {position ?? '–'}
+            </span>
             <div className="entry-body">
                 {editing ? (
                     <RenameInput
@@ -232,8 +281,12 @@ function EntryRow({ entry, position, selected, hasSession, isFirst, isLast, orde
                                     </span>
                                 ) : (
                                     <button
-                                        className="chip"
-                                        title={`Try ${run.number} — click to reopen or delete`}
+                                        className={run.id === bestRunId ? 'chip chip-best' : 'chip'}
+                                        title={
+                                            run.id === bestRunId
+                                                ? `Try ${run.number} — counts in the ranking; click to reopen or delete`
+                                                : `Try ${run.number} — click to reopen or delete`
+                                        }
                                         disabled={snap.pending.has(`run:${run.id}`)}
                                         onClick={() => void runMenu(run)}
                                     >
@@ -246,12 +299,26 @@ function EntryRow({ entry, position, selected, hasSession, isFirst, isLast, orde
                 )}
             </div>
             <div className="entry-tools">
-                <button className="tool" aria-label={`Move ${entry.name} up`} disabled={isFirst || ordering} onClick={() => onMove(-1)}>
-                    ▲
-                </button>
-                <button className="tool" aria-label={`Move ${entry.name} down`} disabled={isLast || ordering} onClick={() => onMove(1)}>
-                    ▼
-                </button>
+                {reorderable && (
+                    <>
+                        <button
+                            className="tool"
+                            aria-label={`Move ${entry.name} up`}
+                            disabled={isFirst || ordering}
+                            onClick={() => onMove(-1)}
+                        >
+                            ▲
+                        </button>
+                        <button
+                            className="tool"
+                            aria-label={`Move ${entry.name} down`}
+                            disabled={isLast || ordering}
+                            onClick={() => onMove(1)}
+                        >
+                            ▼
+                        </button>
+                    </>
+                )}
                 <button className="tool" aria-label={`Rename ${entry.name}`} onClick={() => setEditing(true)} disabled={editing}>
                     ✎
                 </button>

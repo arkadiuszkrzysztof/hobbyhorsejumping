@@ -64,6 +64,14 @@ export function TopBar() {
                 {current && <span className="fence-count-note">{current.fence_count} fences</span>}
 
                 <div className="topbar-status">
+                    <button
+                        className="btn btn-small bell-toggle"
+                        aria-pressed={snap.bell}
+                        title="Ring a bell on this device when registering starts. Switching it on rings it once."
+                        onClick={() => store.setBell(!snap.bell)}
+                    >
+                        {snap.bell ? '🔔 Bell on' : '🔕 Bell off'}
+                    </button>
                     {ROLES.map((role) => {
                         const light = deviceLight(devices.find((d) => d.role === role))
                         return (

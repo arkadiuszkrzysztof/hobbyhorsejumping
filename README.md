@@ -78,6 +78,9 @@ Create a competition in the console (name, number of fences), then:
 2. **Start registering** opens a session for the selected rider. Only crossings
    made while it is registering belong to the session, so children running
    through the gates between rides do not count. Stop and resume as needed.
+   Every console rings a bell when registering starts or resumes — the
+   rider's signal to go. *Bell on / off* in the top bar is per browser, and
+   switching it on rings it once to test the speakers.
 3. **Fences**: one click on a number marks a penalty on that fence, one click
    on A / B / C under it marks that element (`9B`). Click again to take it back.
 4. **START and FINISH signals** of the session are listed in two columns. The
@@ -88,6 +91,11 @@ Create a competition in the console (name, number of fences), then:
 5. **Save** stores the run (time, penalties, chosen signals) with the rider.
    A saved run can be reopened or deleted; a session can be discarded or
    moved to another rider if the wrong one was selected.
+
+**Ranking**, above the rider list, sorts it by result instead of start order:
+fewest penalties first (each marked fence or element is one point), then the
+fastest time, so a clean 30 s beats 20 s with one penalty. A rider's best run
+counts and is the one highlighted.
 
 Everything is in the server's database (`hhj-backend/db.sqlite3`); several
 browsers can be open at once and stay in step.

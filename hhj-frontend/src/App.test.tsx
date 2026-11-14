@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { ArenaState } from './api/types'
 import { App } from './App'
-import { CompetitionStore } from './state/store'
+import { CompetitionStore, ORDER_KEY } from './state/store'
 import { CID, FakeApi, apiWith, entry, makeDeps, makeState, session } from './test/fakes'
 
 async function renderApp(api: FakeApi) {
@@ -139,6 +139,87 @@ describe('competitor list', () => {
         await user.click(screen.getByRole('button', { name: '23.45 · 1 pen' }))
         await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reopen to correct' }))
         await waitFor(() => expect(api.callsTo('POST', '/api/runs/r1/reopen/')).toHaveLength(1))
+    })
+})
+
+describe('ranking view', () => {
+    const run = (id: string, time_ms: number | null, penalties: string[] = [], number = 1) =>
+        ({ id, number, status: 'SAVED', time_ms, penalties }) as const
+    const scored = () =>
+        makeState({
+            entries: [
+                entry('e1', 'Zosia', [run('r1', 20_000, ['5'])]),
+                entry('e2', 'Kuba'),
+                entry('e3', 'Ola', [run('r2', 31_000, ['2', '3A']), run('r3', 30_000, [], 2)]),
+                entry('e4', 'Iga', [run('r4', 24_500)]),
+            ],
+            selected_entry: 'e2',
+        })
+    const names = () => competitorRows().map((r) => r.querySelector('.entry-name-text')!.textContent)
+    const numbers = () => competitorRows().map((r) => r.querySelector('.entry-pos')!.textContent)
+
+    it('sorts by penalties, then time; shows places; back to the start order', async () => {
+        const { user, deps } = await renderApp(apiWith(scored()))
+        expect(names()).toEqual(['Zosia', 'Kuba', 'Ola', 'Iga'])
+        expect(screen.getByRole('button', { name: 'Start order' })).toHaveAttribute('aria-pressed', 'true')
+
+        await user.click(screen.getByRole('button', { name: 'Ranking' }))
+        // clean 24.50 and clean 30.00 beat 20.00 with one penalty; no result goes last
+        expect(names()).toEqual(['Iga', 'Ola', 'Zosia', 'Kuba'])
+        expect(numbers()).toEqual(['1', '2', '3', '–'])
+        expect(screen.getByRole('button', { name: 'Ranking' })).toHaveAttribute('aria-pressed', 'true')
+        expect(deps.storageData.get(ORDER_KEY)).toBe('ranking')
+        expect(competitorRows()[3]).toHaveClass('entry-selected') // the selection is unchanged
+
+        await user.click(screen.getByRole('button', { name: 'Start order' }))
+        expect(names()).toEqual(['Zosia', 'Kuba', 'Ola', 'Iga'])
+        expect(numbers()).toEqual(['1', '2', '3', '4'])
+    })
+
+    it('marks the run that counts and offers no reordering', async () => {
+        const { user } = await renderApp(apiWith(scored()))
+        expect(screen.getAllByRole('button', { name: /^Drag to reorder/ })).toHaveLength(4)
+        expect(document.querySelector('.chip-best')).toBeNull()
+
+        await user.click(screen.getByRole('button', { name: 'Ranking' }))
+        expect(screen.queryByRole('button', { name: /^Drag to reorder/ })).toBeNull()
+        expect(screen.queryByRole('button', { name: /^Move .* (up|down)$/ })).toBeNull()
+        expect(screen.getByRole('button', { name: 'Rename Ola' })).toBeInTheDocument()
+        const best = [...document.querySelectorAll('.chip-best')].map((c) => c.textContent)
+        expect(best).toEqual(['24.50 · 0 pen', '30.00 · 0 pen', '20.00 · 1 pen'])
+    })
+
+    it('a competitor can still be selected from the ranking', async () => {
+        const api = apiWith(scored()).on('POST', `/api/competitions/${CID}/select/`, ok({ ...scored(), server_time: 1_800_000_000_500, selected_entry: 'e4' }))
+        const { user } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: 'Ranking' }))
+        await user.click(screen.getByRole('button', { name: 'Iga' }))
+        expect(api.callsTo('POST', `/api/competitions/${CID}/select/`).map((c) => c.body)).toEqual([{ entry: 'e4' }])
+        await waitFor(() => expect(competitorRows()[0]).toHaveClass('entry-selected'))
+    })
+})
+
+describe('start bell', () => {
+    it('rings when the operator starts registering', async () => {
+        const api = apiWith(makeState()).on('POST', `/api/competitions/${CID}/capture/`, ok(later({ session: session() })))
+        const { user, deps } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: /Start registering/ }))
+        await waitFor(() => expect(screen.getByTestId('status-badge')).toHaveTextContent('REGISTERING'))
+        expect(deps.bell.rings).toBe(1)
+    })
+
+    it('can be switched off and on in the top bar; switching on rings it', async () => {
+        const api = apiWith(makeState()).on('POST', `/api/competitions/${CID}/capture/`, ok(later({ session: session() })))
+        const { user, deps } = await renderApp(api)
+        await user.click(screen.getByRole('button', { name: /Bell on/ }))
+        expect(screen.getByRole('button', { name: /Bell off/ })).toHaveAttribute('aria-pressed', 'false')
+        await user.click(screen.getByRole('button', { name: /Start registering/ }))
+        await waitFor(() => expect(screen.getByTestId('status-badge')).toHaveTextContent('REGISTERING'))
+        expect(deps.bell.rings).toBe(0)
+
+        await user.click(screen.getByRole('button', { name: /Bell off/ }))
+        expect(screen.getByRole('button', { name: /Bell on/ })).toHaveAttribute('aria-pressed', 'true')
+        expect(deps.bell.rings).toBe(1)
     })
 })
 

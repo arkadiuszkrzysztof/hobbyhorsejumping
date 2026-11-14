@@ -1,6 +1,7 @@
 import { ApiError, createApi, type Api, type FetchFn, type PickBody } from '../api/client'
 import type { ArenaState, CompetitionSummary, Device, LiveMessage } from '../api/types'
 import { nextClockOffset } from '../lib/time'
+import { ringBell } from '../sound'
 
 /** The bits of the browser the store touches — injected so tests can fake them. */
 export interface WebSocketLike {
@@ -19,10 +20,14 @@ export interface StoreDeps {
     now: () => number
     setTimeout: (fn: () => void, ms: number) => unknown
     clearTimeout: (handle: unknown) => void
+    /** Makes the start-bell sound. The store decides when; the browser knows how. */
+    ringBell: () => void
 }
 
 export type Phase = 'loading' | 'unreachable' | 'first-run' | 'ready'
 export type Connection = 'connecting' | 'online' | 'offline'
+/** How the competitor list is sorted: as they start, or best result first. */
+export type ListOrder = 'start' | 'ranking'
 
 export interface AppError {
     id: number
@@ -39,6 +44,9 @@ export interface Snapshot {
     errors: AppError[]
     /** Estimated server clock minus local clock (ms), null until a state arrived. */
     clockOffset: number | null
+    /** Settings of this browser only (kept in its local storage). */
+    listOrder: ListOrder
+    bell: boolean
 }
 
 export type ActionResult =
@@ -46,11 +54,21 @@ export type ActionResult =
     | { ok: false; status: number; error: string }
 
 export const STORAGE_KEY = 'hhj.competition'
+export const ORDER_KEY = 'hhj.order'
+export const BELL_KEY = 'hhj.bell'
 const RECONNECT_BASE_MS = 500
 const RECONNECT_MAX_MS = 10_000
 
 export function reconnectDelay(attempt: number): number {
     return Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt)
+}
+
+/** True when, from one state to the next, registering was switched on: a session started or resumed. */
+export function startedRegistering(prev: ArenaState | null, next: ArenaState): boolean {
+    const now = next.session
+    if (prev === null || !now?.capturing) return false
+    const before = prev.session
+    return !before?.capturing || before.run_id !== now.run_id
 }
 
 export class CompetitionStore {
@@ -63,6 +81,8 @@ export class CompetitionStore {
         pending: new Set(),
         errors: [],
         clockOffset: null,
+        listOrder: 'start',
+        bell: true,
     }
     private readonly listeners = new Set<() => void>()
     private readonly api: Api
@@ -77,6 +97,11 @@ export class CompetitionStore {
 
     constructor(private readonly deps: StoreDeps) {
         this.api = createApi(deps.fetch)
+        this.snap = {
+            ...this.snap,
+            listOrder: deps.storage?.getItem(ORDER_KEY) === 'ranking' ? 'ranking' : 'start',
+            bell: deps.storage?.getItem(BELL_KEY) !== 'off',
+        }
     }
 
     // ---- external-store plumbing (useSyncExternalStore) ----
@@ -154,7 +179,7 @@ export class CompetitionStore {
         const cid = this.snap.competitionId
         if (!cid) return
         try {
-            this.applyState(await this.api.getState(cid))
+            this.applyState(await this.api.getState(cid), false)
         } catch (e) {
             if (e instanceof ApiError && e.status === 404 && cid === this.snap.competitionId) {
                 // Competition is gone (deleted in the admin?) — fall back to the list.
@@ -176,6 +201,9 @@ export class CompetitionStore {
         const scheme = this.deps.location.protocol === 'https:' ? 'wss' : 'ws'
         const ws = this.deps.createWebSocket(`${scheme}://${this.deps.location.host}/ws/live/${cid}/`)
         this.ws = ws
+        // The server greets a new socket with the current state (API.md): that
+        // one is catching up, not something that happened just now.
+        let greeted = false
         ws.onopen = () => {
             if (this.ws !== ws) return
             this.attempt = 0
@@ -193,8 +221,10 @@ export class CompetitionStore {
             } catch {
                 return
             }
-            if (msg.type === 'state') this.applyState(msg.state)
-            else if (msg.type === 'devices') this.applyDevices(msg.server_time, msg.devices)
+            if (msg.type === 'state') {
+                this.applyState(msg.state, greeted)
+                greeted = true
+            } else if (msg.type === 'devices') this.applyDevices(msg.server_time, msg.devices)
         }
         ws.onerror = () => {
             /* a close event always follows */
@@ -230,8 +260,12 @@ export class CompetitionStore {
 
     // ---- applying server data ----
 
-    /** Apply a state if it belongs to the open competition and is not older than what we show. */
-    applyState(next: ArenaState) {
+    /**
+     * Apply a state if it belongs to the open competition and is not older than what we show.
+     * `live` = it reports a change that has just happened (an answer to our own
+     * action, a push), as opposed to catching up after loading or reconnecting.
+     */
+    applyState(next: ArenaState, live = true) {
         const clockOffset = nextClockOffset(this.snap.clockOffset, next.server_time, this.deps.now())
         if (next.competition.id !== this.snap.competitionId) {
             this.set({ clockOffset })
@@ -245,7 +279,9 @@ export class CompetitionStore {
         // Device lights may have been refreshed by a newer "devices" push.
         const state =
             cur && this.devicesTime > next.server_time ? { ...next, devices: cur.devices } : next
+        const ring = live && this.snap.bell && startedRegistering(cur, state)
         this.set({ state, clockOffset })
+        if (ring) this.deps.ringBell()
         const known = this.snap.competitions.find((c) => c.id === next.competition.id)
         if (
             known &&
@@ -268,6 +304,20 @@ export class CompetitionStore {
         }
         this.devicesTime = serverTime
         this.set({ state: { ...cur, devices }, clockOffset })
+    }
+
+    // ---- settings of this browser ----
+
+    setListOrder(order: ListOrder) {
+        this.deps.storage?.setItem(ORDER_KEY, order)
+        this.set({ listOrder: order })
+    }
+
+    /** Switching the bell on rings it once, so the operator hears that the speakers work. */
+    setBell(on: boolean) {
+        this.deps.storage?.setItem(BELL_KEY, on ? 'on' : 'off')
+        this.set({ bell: on })
+        if (on) this.deps.ringBell()
     }
 
     // ---- errors ----
@@ -411,5 +461,6 @@ export function browserDeps(): StoreDeps {
         now: () => Date.now(),
         setTimeout: (fn, ms) => window.setTimeout(fn, ms),
         clearTimeout: (h) => window.clearTimeout(h as number),
+        ringBell,
     }
 }

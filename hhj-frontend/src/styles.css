@@ -516,6 +516,52 @@ button:disabled {
 
 /* ---------- competitors ---------- */
 
+.list-head {
+    display: flex;
+    flex-wrap: wrap; /* in a narrow column the switch moves below the title */
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 8px;
+    margin-bottom: 8px;
+}
+
+.list-head .section-title {
+    margin: 0;
+}
+
+/* two-way switch: start order / ranking */
+.segmented {
+    display: inline-flex;
+    flex: none;
+    border: 2px solid var(--border-strong);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.segmented button {
+    min-height: 34px;
+    padding: 0 10px;
+    border: 0;
+    background: var(--panel);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.segmented button + button {
+    border-left: 2px solid var(--border-strong);
+}
+
+.segmented button[aria-pressed='true'] {
+    background: var(--accent);
+    color: var(--accent-text);
+}
+
+.list-note {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
 .competitors {
     display: flex;
     flex-direction: column;
@@ -545,6 +591,17 @@ button:disabled {
     border: 2px solid var(--border);
     border-radius: var(--radius);
     cursor: pointer;
+}
+
+/* ranking: no drag handle, the number is the place */
+.entry-ranked {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.entry-ranked .entry-pos {
+    min-width: 30px;
+    font-size: 18px;
+    color: var(--text);
 }
 
 .entry-selected {
@@ -657,6 +714,13 @@ button:disabled {
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+
+/* the run that counts in the ranking */
+.chip-best {
+    border: 2px solid var(--accent);
+    background: var(--accent-soft);
+    font-weight: 800;
 }
 
 .chip-live {

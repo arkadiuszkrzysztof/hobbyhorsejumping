@@ -17,5 +17,6 @@ proxy them to the backend at `VITE_BACKEND` (default `http://127.0.0.1:3003`), e
 `/api` and `/ws` to the backend the same way.
 
 Layout of `src/`: `api/` (contract types + HTTP client), `state/` (the competition store:
-fetch, WebSocket with reconnect, actions), `lib/` (pure time / fence helpers),
+fetch, WebSocket with reconnect, actions, when the start bell rings), `lib/` (pure time /
+fence / ranking helpers), `sound.ts` (the bell itself, synthesized with Web Audio),
 `components/`, `test/` (fakes).

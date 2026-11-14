@@ -73,6 +73,8 @@ export interface TestDeps extends StoreDeps {
     runTimers: () => void
     storageData: Map<string, string>
     clock: { now: number }
+    /** How often the store rang the start bell. */
+    bell: { rings: number }
 }
 
 export function makeDeps(api: FakeApi): TestDeps {
@@ -80,6 +82,7 @@ export function makeDeps(api: FakeApi): TestDeps {
     const timers: TestDeps['timers'] = []
     const storageData = new Map<string, string>()
     const clock = { now: 1_000_000 }
+    const bell = { rings: 0 }
     return {
         fetch: api.fetch,
         createWebSocket: (url) => {
@@ -102,6 +105,10 @@ export function makeDeps(api: FakeApi): TestDeps {
         clearTimeout: (h) => {
             ;(h as { cleared: boolean }).cleared = true
         },
+        ringBell: () => {
+            bell.rings += 1
+        },
+        bell,
         sockets,
         timers,
         storageData,

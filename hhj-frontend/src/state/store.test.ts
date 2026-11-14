@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { CID, FakeApi, apiWith, makeDeps, makeState, summary } from '../test/fakes'
-import { CompetitionStore, STORAGE_KEY, reconnectDelay } from './store'
+import { CID, FakeApi, apiWith, makeDeps, makeState, session, summary } from '../test/fakes'
+import { BELL_KEY, CompetitionStore, ORDER_KEY, STORAGE_KEY, reconnectDelay, startedRegistering } from './store'
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
@@ -153,5 +153,173 @@ describe('CompetitionStore', () => {
         const r = await store.select('e2')
         expect(r).toMatchObject({ ok: false, status: 409 })
         expect(store.getSnapshot().errors).toEqual([])
+    })
+})
+
+const T0 = 1_800_000_000_000
+const idle = (dt: number) => makeState({ server_time: T0 + dt })
+const registering = (dt: number, run_id = 'r-open') => makeState({ server_time: T0 + dt, session: session({ run_id }) })
+const paused = (dt: number) => makeState({ server_time: T0 + dt, session: session({ capturing: false }) })
+
+describe('startedRegistering', () => {
+    it('is true when a session starts or resumes', () => {
+        expect(startedRegistering(idle(0), registering(1))).toBe(true)
+        expect(startedRegistering(paused(0), registering(1))).toBe(true)
+    })
+
+    it('is true when another run is being registered than before', () => {
+        expect(startedRegistering(registering(0, 'run-a'), registering(1, 'run-b'))).toBe(true)
+    })
+
+    it('is false when nothing started', () => {
+        expect(startedRegistering(null, registering(1))).toBe(false)
+        expect(startedRegistering(registering(0), registering(1))).toBe(false)
+        expect(startedRegistering(registering(0), paused(1))).toBe(false)
+        expect(startedRegistering(registering(0), idle(1))).toBe(false)
+        expect(startedRegistering(idle(0), paused(1))).toBe(false)
+        expect(startedRegistering(idle(0), idle(1))).toBe(false)
+    })
+})
+
+describe('start bell', () => {
+    async function online(first = idle(0)) {
+        const api = apiWith(first)
+        const { store, deps } = await started(api)
+        const ws = deps.sockets[0]!
+        ws.open()
+        ws.send({ type: 'state', state: first }) // the server's greeting
+        return { api, store, deps, ws }
+    }
+
+    it('rings once when a push reports that registering started', async () => {
+        const { deps, ws } = await online()
+        ws.send({ type: 'state', state: registering(10) })
+        expect(deps.bell.rings).toBe(1)
+        ws.send({ type: 'state', state: registering(20) }) // a penalty, a signal ...
+        expect(deps.bell.rings).toBe(1)
+    })
+
+    it('rings again when registering is resumed after a stop', async () => {
+        const { deps, ws } = await online()
+        ws.send({ type: 'state', state: registering(10) })
+        ws.send({ type: 'state', state: paused(20) })
+        expect(deps.bell.rings).toBe(1)
+        ws.send({ type: 'state', state: registering(30) })
+        expect(deps.bell.rings).toBe(2)
+    })
+
+    it("rings for the operator's own click, and not a second time for the push that follows", async () => {
+        const { api, store, deps, ws } = await online()
+        api.on('POST', `/api/competitions/${CID}/capture/`, { body: registering(10) })
+        await store.capture(true)
+        expect(deps.bell.rings).toBe(1)
+        ws.send({ type: 'state', state: registering(10) })
+        expect(deps.bell.rings).toBe(1)
+    })
+
+    it('rings for the own click even while the live connection is down', async () => {
+        const { api, store, deps, ws } = await online()
+        ws.drop()
+        api.on('POST', `/api/competitions/${CID}/capture/`, { body: registering(10) })
+        await store.capture(true)
+        expect(deps.bell.rings).toBe(1)
+    })
+
+    it('stays silent for a session that is already registering when the page loads', async () => {
+        const { deps, ws } = await online(registering(0))
+        expect(deps.bell.rings).toBe(0)
+        ws.send({ type: 'state', state: registering(10) })
+        expect(deps.bell.rings).toBe(0)
+    })
+
+    it('stays silent for a start it only learns about after reconnecting, then rings for the next one', async () => {
+        const { api, store, deps, ws } = await online()
+        ws.drop()
+        api.on('GET', `/api/competitions/${CID}/state/`, { body: registering(10) })
+        deps.runTimers()
+        const again = deps.sockets[1]!
+        again.open()
+        again.send({ type: 'state', state: registering(11) }) // greeting of the new socket
+        await flush() // the re-fetch
+        expect(store.getSnapshot().state?.session?.capturing).toBe(true)
+        expect(deps.bell.rings).toBe(0)
+
+        again.send({ type: 'state', state: idle(20) })
+        again.send({ type: 'state', state: registering(30, 'r-next') })
+        expect(deps.bell.rings).toBe(1)
+    })
+
+    it('greeting first, re-fetch second: still silent', async () => {
+        const { api, deps, ws } = await online()
+        ws.drop()
+        api.on('GET', `/api/competitions/${CID}/state/`, { body: registering(12) })
+        deps.runTimers()
+        deps.sockets[1]!.open()
+        await flush() // the re-fetch answers before the greeting arrives
+        deps.sockets[1]!.send({ type: 'state', state: registering(12) })
+        expect(deps.bell.rings).toBe(0)
+    })
+
+    it('does not ring for a state that is ignored as older or of another competition', async () => {
+        const { deps, ws } = await online(idle(100))
+        ws.send({ type: 'state', state: registering(50) })
+        ws.send({
+            type: 'state',
+            state: { ...registering(200), competition: { id: 'zz', name: 'x', fence_count: 1 } },
+        })
+        expect(deps.bell.rings).toBe(0)
+    })
+
+    it('switched off: silent and remembered; switching on rings once as a test', async () => {
+        const { store, deps, ws } = await online()
+        expect(store.getSnapshot().bell).toBe(true)
+        store.setBell(false)
+        expect(store.getSnapshot().bell).toBe(false)
+        expect(deps.storageData.get(BELL_KEY)).toBe('off')
+        ws.send({ type: 'state', state: registering(10) })
+        expect(deps.bell.rings).toBe(0)
+
+        store.setBell(true)
+        expect(store.getSnapshot().bell).toBe(true)
+        expect(deps.storageData.get(BELL_KEY)).toBe('on')
+        expect(deps.bell.rings).toBe(1)
+    })
+})
+
+describe('settings of this browser', () => {
+    it('default to start order with the bell on', () => {
+        const snap = new CompetitionStore(makeDeps(new FakeApi())).getSnapshot()
+        expect(snap.listOrder).toBe('start')
+        expect(snap.bell).toBe(true)
+    })
+
+    it('are read from storage', () => {
+        const deps = makeDeps(new FakeApi())
+        deps.storageData.set(ORDER_KEY, 'ranking')
+        deps.storageData.set(BELL_KEY, 'off')
+        const snap = new CompetitionStore(deps).getSnapshot()
+        expect(snap.listOrder).toBe('ranking')
+        expect(snap.bell).toBe(false)
+    })
+
+    it('fall back to the defaults on anything unexpected, or without storage', () => {
+        const deps = makeDeps(new FakeApi())
+        deps.storageData.set(ORDER_KEY, 'sideways')
+        deps.storageData.set(BELL_KEY, 'maybe')
+        expect(new CompetitionStore(deps).getSnapshot()).toMatchObject({ listOrder: 'start', bell: true })
+        const store = new CompetitionStore({ ...makeDeps(new FakeApi()), storage: null })
+        expect(store.getSnapshot()).toMatchObject({ listOrder: 'start', bell: true })
+        store.setListOrder('ranking') // no storage: still works for this page
+        expect(store.getSnapshot().listOrder).toBe('ranking')
+    })
+
+    it('the list order is remembered', () => {
+        const deps = makeDeps(new FakeApi())
+        const store = new CompetitionStore(deps)
+        store.setListOrder('ranking')
+        expect(store.getSnapshot().listOrder).toBe('ranking')
+        expect(deps.storageData.get(ORDER_KEY)).toBe('ranking')
+        store.setListOrder('start')
+        expect(deps.storageData.get(ORDER_KEY)).toBe('start')
     })
 })
