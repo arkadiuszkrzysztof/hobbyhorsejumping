@@ -1,4 +1,4 @@
-import { ApiError, createApi, type Api, type FetchFn, type PickBody } from '../api/client'
+import { ApiError, createApi, type Api, type EntryPatch, type FetchFn, type PickBody } from '../api/client'
 import type { ArenaState, CompetitionSummary, Device, LiveMessage } from '../api/types'
 import { nextClockOffset } from '../lib/time'
 import { ringBell } from '../sound'
@@ -391,12 +391,12 @@ export class CompetitionStore {
         return this.perform('competition:update', () => this.api.updateCompetition(this.cid, patch))
     }
 
-    addEntry(name: string) {
-        return this.perform('entry:add', () => this.api.addEntry(this.cid, name))
+    addEntry(name: string, horse = '') {
+        return this.perform('entry:add', () => this.api.addEntry(this.cid, name, horse))
     }
 
-    renameEntry(eid: string, name: string) {
-        return this.perform(`entry:rename:${eid}`, () => this.api.renameEntry(eid, name))
+    updateEntry(eid: string, patch: EntryPatch) {
+        return this.perform(`entry:update:${eid}`, () => this.api.updateEntry(eid, patch))
     }
 
     removeEntry(eid: string) {

@@ -122,8 +122,8 @@ export function makeDeps(api: FakeApi): TestDeps {
 
 export const CID = 'c1'
 
-export function entry(id: string, name: string, runs: Entry['runs'] = []): Entry {
-    return { id, name, runs }
+export function entry(id: string, name: string, runs: Entry['runs'] = [], horse = ''): Entry {
+    return { id, name, horse, runs }
 }
 
 export function session(patch: Partial<Session> = {}): Session {

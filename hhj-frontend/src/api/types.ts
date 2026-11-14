@@ -13,6 +13,8 @@ export interface Run {
 export interface Entry {
     id: string
     name: string
+    /** Name of the hobby horse; '' when none was given. */
+    horse: string
     runs: Run[]
 }
 

@@ -34,7 +34,7 @@ of one competition, and the WebSocket pushes the same object.
   "server_time": 1794000000000,          // epoch ms on the server when this was produced
   "competition": { "id": "…", "name": "Saturday open", "fence_count": 12 },
   "entries": [                           // in list order
-    { "id": "…", "name": "Zosia",
+    { "id": "…", "name": "Zosia", "horse": "Stormy",   // horse: "" when none was given
       "runs": [ { "id": "…", "number": 1, "status": "SAVED", "time_ms": 23450, "penalties": ["7", "9B"] },
                 { "id": "…", "number": 2, "status": "OPEN",  "time_ms": null,  "penalties": [] } ] }
   ],
@@ -80,8 +80,8 @@ possible right now), each with `{"error": "human readable"}`.
 | `POST /api/competitions/` | `{name, fence_count?}` | create (fence_count 1–24, default 12) → state, `201` |
 | `GET /api/competitions/<cid>/state/` | | state |
 | `PATCH /api/competitions/<cid>/` | `{name?, fence_count?}` | rename / change fence count → state |
-| `POST /api/competitions/<cid>/entries/` | `{name}` | add a competitor at the end of the list → state |
-| `PATCH /api/entries/<eid>/` | `{name}` | rename → state |
+| `POST /api/competitions/<cid>/entries/` | `{name, horse?}` | add a competitor at the end of the list; `horse` is the optional name of their hobby horse → state |
+| `PATCH /api/entries/<eid>/` | `{name?, horse?}` | rename the competitor and / or the horse (`horse: ""` or `null` removes it); at least one of the two → state |
 | `DELETE /api/entries/<eid>/` | | remove from the list **with its saved runs** → state. `409` while its session is open |
 | `POST /api/competitions/<cid>/order/` | `{entries: [eid, …]}` | new order; must list every entry exactly once → state |
 | `POST /api/competitions/<cid>/select/` | `{entry: eid \| null, move?: bool}` | select. `409` if a session is open for another entry, unless `move: true`, which hands the open session over to the selected entry → state |

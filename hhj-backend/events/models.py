@@ -178,6 +178,8 @@ class CompetitionStart(models.Model):
   id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
   competition = models.ForeignKey(Competition, on_delete=models.CASCADE, related_name='starts')
   participant = models.ForeignKey(Participant, on_delete=models.CASCADE, related_name='starts')
+  # the hobby horse ridden in this competition, as typed at sign-up; optional
+  horse_name = models.CharField(max_length=100, blank=True, default='')
   starting_order = models.IntegerField(default=0)
   has_started = models.BooleanField(default=False)
   has_finished = models.BooleanField(default=False)

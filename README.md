@@ -72,9 +72,11 @@ Check what the server sees: `curl localhost:3003/devices/` and
 Create a competition in the console (name, number of fences), then:
 
 1. **Riders** are the list on the left. Add, rename, remove and drag them into
-   order at any time. Saving a run moves on to the next rider down; click
-   anyone — also somebody who already rode — to give them the next run. A
-   rider can have any number of runs.
+   order at any time. A rider can sign up with the name of their horse
+   (optional; add or correct it later with the pencil); it is shown under the
+   rider's name in the list and for the current rider. Saving a run moves on
+   to the next rider down; click anyone — also somebody who already rode — to
+   give them the next run. A rider can have any number of runs.
 2. **Start registering** opens a session for the selected rider. Only crossings
    made while it is registering belong to the session, so children running
    through the gates between rides do not count. Stop and resume as needed.

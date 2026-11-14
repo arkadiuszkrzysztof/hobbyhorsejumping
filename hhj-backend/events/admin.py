@@ -51,7 +51,7 @@ class EventStartingNumberAdmin(admin.ModelAdmin):
 
 @admin.register(CompetitionStart)
 class CompetitionStartAdmin(admin.ModelAdmin):
-  list_display = ['participant', 'competition', 'starting_order', 'has_started', 'has_finished', 'completion_time', 'penalty_points', 'is_eliminated']
+  list_display = ['participant', 'horse_name', 'competition', 'starting_order', 'has_started', 'has_finished', 'completion_time', 'penalty_points', 'is_eliminated']
   list_filter = ['participant', 'competition']
   search_fields = ['participant', 'competition']
 

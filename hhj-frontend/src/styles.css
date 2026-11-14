@@ -681,6 +681,30 @@ button:disabled {
     color: #000;
 }
 
+/* the horse under the competitor's name; a long one wraps rather than being cut */
+.entry-horse {
+    display: block;
+    overflow-wrap: anywhere;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+.entry-selected .entry-horse {
+    color: var(--text);
+}
+
+.edit-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.rename-horse {
+    font-size: 15px;
+    font-weight: 600;
+}
+
 .rename-input {
     width: 100%;
     min-height: 36px;
@@ -781,14 +805,21 @@ button:disabled {
     position: sticky;
     bottom: 0;
     display: flex;
+    flex-direction: column;
     gap: 6px;
     margin-top: auto;
     padding: 10px 0;
     background: var(--panel-2);
 }
 
+/* second line of the form: the horse and the button */
+.add-row {
+    display: flex;
+    gap: 6px;
+}
+
 .add-competitor input {
-    flex: 1;
+    flex: 1 1 auto;
     min-width: 0;
     min-height: var(--tap);
     padding: 0 10px;
@@ -839,6 +870,15 @@ button:disabled {
     font-size: 34px;
     font-weight: 900;
     line-height: 1.1;
+    overflow-wrap: anywhere;
+}
+
+.current-horse {
+    display: block;
+    margin-top: 2px;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--muted);
     overflow-wrap: anywhere;
 }
 

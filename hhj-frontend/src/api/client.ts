@@ -54,9 +54,9 @@ export function createApi(fetchFn: FetchFn) {
         getState: (cid: string) => state('GET', `/api/competitions/${cid}/state/`),
         updateCompetition: (cid: string, patch: { name?: string; fence_count?: number }) =>
             state('PATCH', `/api/competitions/${cid}/`, patch),
-        addEntry: (cid: string, name: string) =>
-            state('POST', `/api/competitions/${cid}/entries/`, { name }),
-        renameEntry: (eid: string, name: string) => state('PATCH', `/api/entries/${eid}/`, { name }),
+        addEntry: (cid: string, name: string, horse = '') =>
+            state('POST', `/api/competitions/${cid}/entries/`, horse ? { name, horse } : { name }),
+        updateEntry: (eid: string, patch: EntryPatch) => state('PATCH', `/api/entries/${eid}/`, patch),
         deleteEntry: (eid: string) => state('DELETE', `/api/entries/${eid}/`),
         reorder: (cid: string, entries: string[]) =>
             state('POST', `/api/competitions/${cid}/order/`, { entries }),
@@ -71,6 +71,12 @@ export function createApi(fetchFn: FetchFn) {
         reopen: (rid: string) => state('POST', `/api/runs/${rid}/reopen/`),
         deleteRun: (rid: string) => state('DELETE', `/api/runs/${rid}/`),
     }
+}
+
+/** What can be corrected on a competitor: at least one of the two. `horse: ''` removes the horse. */
+export interface EntryPatch {
+    name?: string
+    horse?: string
 }
 
 export type Api = ReturnType<typeof createApi>

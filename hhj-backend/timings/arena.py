@@ -58,6 +58,18 @@ def _name(value):
     return value
 
 
+def _horse(value):
+    """The hobby horse's name: optional, '' when there is none."""
+    if value is None:
+        return ''
+    if not isinstance(value, str):
+        raise ArenaError("The horse's name must be text")
+    value = ' '.join(value.split())
+    if len(value) > MAX_NAME:
+        raise ArenaError(f"The horse's name is longer than {MAX_NAME} characters")
+    return value
+
+
 def _fence_count(value):
     if type(value) is not int or not 1 <= value <= MAX_FENCES:
         raise ArenaError(f'The number of fences must be between 1 and {MAX_FENCES}')
@@ -114,9 +126,10 @@ def update_competition(competition, name=KEEP, fence_count=KEEP):
 
 # --- the list of competitors ----------------------------------------------------
 
-def add_entry(competition, name):
+def add_entry(competition, name, horse=None):
     """A competitor joins, at the end of the list."""
     name = _name(name)
+    horse = _horse(horse)
     # the same kid in another competition is the same Participant; a second kid
     # with the same name in THIS competition is a different one
     here = competition.starts.values_list('participant_id', flat=True)
@@ -126,6 +139,7 @@ def add_entry(competition, name):
         participant = Participant.objects.create(name=name)
     last = competition.starts.aggregate(m=Max('starting_order'))['m']
     entry = CompetitionStart.objects.create(competition=competition, participant=participant,
+                                            horse_name=horse,
                                             starting_order=0 if last is None else last + 1)
     if last is None and competition.selected_start_id is None:
         competition.selected_start = entry                  # the first one in: selected
@@ -143,6 +157,12 @@ def rename_entry(entry, name):
     else:
         participant.name = name
         participant.save(update_fields=['name'])
+
+
+def set_horse(entry, horse):
+    """Name, rename or (None / '') take away the horse of this entry."""
+    entry.horse_name = _horse(horse)
+    entry.save(update_fields=['horse_name'])
 
 
 def remove_entry(entry):
@@ -438,7 +458,7 @@ def snapshot(competition):
     entries = []
     for entry in _entries(competition):
         entries.append({
-            'id': str(entry.pk), 'name': entry.participant.name,
+            'id': str(entry.pk), 'name': entry.participant.name, 'horse': entry.horse_name,
             'runs': [{'id': str(r.pk), 'number': i + 1, 'status': r.status,
                       'time_ms': session['time_ms'] if session and r.pk == current.pk else r.time_ms,
                       'penalties': list(r.penalties)}

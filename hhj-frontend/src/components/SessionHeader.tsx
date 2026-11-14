@@ -3,6 +3,7 @@ import type { Session } from '../api/types'
 import { computeReadout, estimateServerNow, formatTime } from '../lib/time'
 import { useStore } from '../state/context'
 import { useConfirm } from './AskDialog'
+import { HorseName } from './HorseName'
 
 type Status = 'IDLE' | 'REGISTERING' | 'PAUSED'
 
@@ -68,6 +69,7 @@ export function SessionHeader() {
                 <div className="current-name" data-testid="current-name">
                     {entry ? entry.name : <span className="muted">Nobody selected — pick a competitor on the left</span>}
                 </div>
+                {entry && <HorseName name={entry.horse} className="current-horse" />}
                 <div className="current-meta">
                     {entry && <span className="try">{session ? `Try ${session.number}` : `Next: try ${nextTry}`}</span>}
                     <span className={`badge badge-${status.toLowerCase()}`} data-testid="status-badge">

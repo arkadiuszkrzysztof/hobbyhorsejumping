@@ -132,6 +132,37 @@ class FlowApiTests(ApiCase):
         state = self.call('delete', f'/api/entries/{self.ids[0]}/')
         self.assertEqual([e['name'] for e in state['entries']], ['Cela', 'Beata'])
 
+    def test_horse_names(self):
+        base = f'/api/competitions/{self.cid}'
+        horses = lambda state: [e['horse'] for e in state['entries']]
+        state = self.call('post', f'{base}/entries/', {'name': 'Dora', 'horse': ' Storm  Chaser '})
+        self.assertEqual(horses(state), ['', '', '', 'Storm Chaser'])
+        dora = state['entries'][3]['id']
+        # a bad horse name adds nobody
+        self.call('post', f'{base}/entries/', {'name': 'Ewa', 'horse': 7}, 400)
+        self.call('post', f'{base}/entries/', {'name': 'Ewa', 'horse': 'x' * 101}, 400)
+        self.assertEqual(len(self.call('get', f'{base}/state/')['entries']), 4)
+
+        state = self.call('patch', f'/api/entries/{self.ids[0]}/', {'horse': 'Stormy'})        # horse only
+        self.assertEqual([(e['name'], e['horse']) for e in state['entries']][0], ('Ala', 'Stormy'))
+        state = self.call('patch', f'/api/entries/{self.ids[0]}/', {'name': 'Alicja'})         # name only
+        self.assertEqual([(e['name'], e['horse']) for e in state['entries']][0], ('Alicja', 'Stormy'))
+        state = self.call('patch', f'/api/entries/{dora}/', {'name': 'Dorota', 'horse': 'Thunder'})
+        self.assertEqual([(e['name'], e['horse']) for e in state['entries']][3], ('Dorota', 'Thunder'))
+        self.assertEqual(horses(self.call('patch', f'/api/entries/{dora}/', {'horse': ''})), ['Stormy', '', '', ''])
+        self.assertEqual(horses(self.call('patch', f'/api/entries/{self.ids[0]}/', {'horse': None})), [''] * 4)
+
+    def test_a_bad_entry_patch_changes_nothing(self):
+        base = f'/api/competitions/{self.cid}'
+        self.call('patch', f'/api/entries/{self.ids[0]}/', {'horse': 'Stormy'})
+        self.assertIn('Nothing to change', self.call('patch', f'/api/entries/{self.ids[0]}/', {}, 400)['error'])
+        self.call('patch', f'/api/entries/{self.ids[0]}/', {'horse': 7}, 400)
+        # one good and one bad field: neither is applied
+        self.call('patch', f'/api/entries/{self.ids[0]}/', {'name': 'Alicja', 'horse': 'x' * 101}, 400)
+        self.call('patch', f'/api/entries/{self.ids[0]}/', {'name': '', 'horse': 'Thunder'}, 400)
+        first = self.call('get', f'{base}/state/')['entries'][0]
+        self.assertEqual((first['name'], first['horse']), ('Ala', 'Stormy'))
+
     def test_select(self):
         base = f'/api/competitions/{self.cid}'
         self.assertEqual(self.call('post', f'{base}/select/', {'entry': self.ids[2]})['selected_entry'], self.ids[2])

@@ -91,7 +91,8 @@ def competition(request, cid):
 @console_view(['POST'])
 def entries(request, cid):
     c = _competition(cid)
-    arena.add_entry(c, _body(request).get('name'))
+    data = _body(request)
+    arena.add_entry(c, data.get('name'), data.get('horse'))
     return c
 
 
@@ -103,8 +104,14 @@ def entry(request, eid):
     c = e.competition
     if request.method == 'DELETE':
         arena.remove_entry(e)
-    else:
-        arena.rename_entry(e, _body(request).get('name'))
+        return c
+    data = _body(request)
+    if 'name' not in data and 'horse' not in data:
+        raise arena.ArenaError('Nothing to change: give "name" and / or "horse"')
+    if 'name' in data:
+        arena.rename_entry(e, data['name'])
+    if 'horse' in data:
+        arena.set_horse(e, data['horse'])
     return c
 
 

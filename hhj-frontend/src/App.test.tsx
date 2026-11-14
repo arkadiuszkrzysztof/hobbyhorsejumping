@@ -184,7 +184,7 @@ describe('ranking view', () => {
         await user.click(screen.getByRole('button', { name: 'Ranking' }))
         expect(screen.queryByRole('button', { name: /^Drag to reorder/ })).toBeNull()
         expect(screen.queryByRole('button', { name: /^Move .* (up|down)$/ })).toBeNull()
-        expect(screen.getByRole('button', { name: 'Rename Ola' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Edit Ola' })).toBeInTheDocument()
         const best = [...document.querySelectorAll('.chip-best')].map((c) => c.textContent)
         expect(best).toEqual(['24.50 · 0 pen', '30.00 · 0 pen', '20.00 · 1 pen'])
     })
@@ -196,6 +196,118 @@ describe('ranking view', () => {
         await user.click(screen.getByRole('button', { name: 'Iga' }))
         expect(api.callsTo('POST', `/api/competitions/${CID}/select/`).map((c) => c.body)).toEqual([{ entry: 'e4' }])
         await waitFor(() => expect(competitorRows()[0]).toHaveClass('entry-selected'))
+    })
+})
+
+describe('horse names', () => {
+    const withHorses = (patch: Partial<ArenaState> = {}) =>
+        makeState({
+            entries: [
+                entry('e1', 'Zosia', [{ id: 'r1', number: 1, status: 'SAVED', time_ms: 23_450, penalties: [] }], 'Stormy'),
+                entry('e2', 'Kuba'),
+                entry('e3', 'Ola', [], 'Black Thunder'),
+            ],
+            ...patch,
+        })
+    const horses = () => competitorRows().map((r) => r.querySelector('.entry-horse')?.textContent ?? null)
+    const patches = (api: FakeApi, eid: string) => api.callsTo('PATCH', `/api/entries/${eid}/`).map((c) => c.body)
+
+    it('are shown in the list (both orders) and for the current competitor; nothing where there is none', async () => {
+        const api = apiWith(withHorses()).on(
+            'POST',
+            `/api/competitions/${CID}/select/`,
+            ok(withHorses({ server_time: 1_800_000_000_500, selected_entry: 'e2' }))
+        )
+        const { user } = await renderApp(api)
+        expect(horses()).toEqual(['🐴 Horse: Stormy', null, '🐴 Horse: Black Thunder'])
+        expect(screen.getByTestId('current-name')).toHaveTextContent('Zosia')
+        expect(document.querySelector('.current-horse')).toHaveTextContent('Stormy')
+
+        await user.click(screen.getByRole('button', { name: 'Ranking' }))
+        expect(horses()).toEqual(['🐴 Horse: Stormy', null, '🐴 Horse: Black Thunder'])
+
+        await user.click(screen.getByRole('button', { name: 'Kuba' }))
+        await waitFor(() => expect(screen.getByTestId('current-name')).toHaveTextContent('Kuba'))
+        expect(document.querySelector('.current-horse')).toBeNull()
+    })
+
+    it('signing up with a horse sends both and returns to the name field', async () => {
+        const api = apiWith(makeState()).on('POST', `/api/competitions/${CID}/entries/`, (call) => {
+            const body = call.body as { name: string; horse?: string }
+            return ok(later({ entries: [...makeState().entries, entry('e9', body.name, [], body.horse ?? '')] }))
+        })
+        const { user } = await renderApp(api)
+        const name = screen.getByRole('textbox', { name: 'New competitor name' })
+        const horse = screen.getByRole('textbox', { name: 'Horse name (optional)' })
+        await user.type(name, 'Antek')
+        await user.tab()
+        expect(horse).toHaveFocus()
+        await user.type(horse, '  Storm Chaser {Enter}')
+        await waitFor(() => expect(competitorRows()).toHaveLength(4))
+        expect(api.callsTo('POST', `/api/competitions/${CID}/entries/`).map((c) => c.body)).toEqual([
+            { name: 'Antek', horse: 'Storm Chaser' },
+        ])
+        expect(horses()[3]).toBe('🐴 Horse: Storm Chaser')
+        expect(name).toHaveValue('')
+        expect(horse).toHaveValue('')
+        expect(name).toHaveFocus()
+    })
+
+    it('a horse without a name adds nobody', async () => {
+        const api = apiWith(makeState())
+        const { user } = await renderApp(api)
+        await user.type(screen.getByRole('textbox', { name: 'Horse name (optional)' }), 'Stormy{Enter}')
+        expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+        expect(api.callsTo('POST', `/api/competitions/${CID}/entries/`)).toEqual([])
+    })
+
+    it('editing sends only what changed; moving between the two fields does not save', async () => {
+        const api = apiWith(withHorses())
+            .on('PATCH', '/api/entries/e2/', ok(withHorses({ server_time: 1_800_000_000_500 })))
+            .on('PATCH', '/api/entries/e1/', ok(withHorses({ server_time: 1_800_000_000_600 })))
+        const { user } = await renderApp(api)
+
+        // give Kuba a horse: name untouched
+        await user.click(screen.getByRole('button', { name: 'Edit Kuba' }))
+        const name = screen.getByRole('textbox', { name: 'Competitor name' })
+        expect(name).toHaveFocus()
+        expect(name).toHaveValue('Kuba')
+        await user.tab()
+        const horse = screen.getByRole('textbox', { name: 'Horse name' })
+        expect(horse).toHaveFocus()
+        expect(patches(api, 'e2')).toEqual([]) // the tab did not save
+        await user.type(horse, 'Rocket{Enter}')
+        await waitFor(() => expect(patches(api, 'e2')).toEqual([{ horse: 'Rocket' }]))
+        await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Horse name' })).toBeNull())
+
+        // both at once, saved by clicking elsewhere
+        await user.click(screen.getByRole('button', { name: 'Edit Zosia' }))
+        await user.clear(screen.getByRole('textbox', { name: 'Competitor name' }))
+        await user.type(screen.getByRole('textbox', { name: 'Competitor name' }), 'Zofia')
+        await user.clear(screen.getByRole('textbox', { name: 'Horse name' }))
+        await user.click(screen.getByText(/^Competitors/))
+        await waitFor(() => expect(patches(api, 'e1')).toEqual([{ name: 'Zofia', horse: '' }]))
+    })
+
+    it('editing: Escape, no change, or an emptied name send nothing', async () => {
+        const api = apiWith(withHorses())
+        const { user } = await renderApp(api)
+
+        await user.click(screen.getByRole('button', { name: 'Edit Zosia' }))
+        await user.type(screen.getByRole('textbox', { name: 'Horse name' }), ' II{Escape}')
+        expect(screen.queryByRole('textbox', { name: 'Horse name' })).toBeNull()
+
+        await user.click(screen.getByRole('button', { name: 'Edit Zosia' }))
+        await user.keyboard('{Enter}')
+        expect(screen.queryByRole('textbox', { name: 'Horse name' })).toBeNull()
+
+        await user.click(screen.getByRole('button', { name: 'Edit Zosia' }))
+        await user.clear(screen.getByRole('textbox', { name: 'Competitor name' }))
+        await user.keyboard('{Enter}')
+        expect(screen.queryByRole('textbox', { name: 'Competitor name' })).toBeNull()
+
+        expect(patches(api, 'e1')).toEqual([])
+        expect(horses()[0]).toBe('🐴 Horse: Stormy')
     })
 })
 

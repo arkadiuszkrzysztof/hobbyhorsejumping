@@ -21,6 +21,7 @@ import { ranking } from '../lib/ranking'
 import { formatTime } from '../lib/time'
 import { useStore } from '../state/context'
 import { useAsk, useConfirm } from './AskDialog'
+import { HorseName } from './HorseName'
 
 export function runChipText(run: Run): string {
     if (run.status === 'OPEN') return 'live'
@@ -251,24 +252,32 @@ function EntryRow({
             </span>
             <div className="entry-body">
                 {editing ? (
-                    <RenameInput
-                        initial={entry.name}
-                        onDone={async (name) => {
-                            if (name && name !== entry.name) await store.renameEntry(entry.id, name)
+                    <EditEntry
+                        entry={entry}
+                        onDone={async (name, horse) => {
+                            // An emptied name is not a rename; an emptied horse removes the horse.
+                            const patch = {
+                                ...(name && name !== entry.name ? { name } : {}),
+                                ...(horse !== entry.horse ? { horse } : {}),
+                            }
+                            if (Object.keys(patch).length > 0) await store.updateEntry(entry.id, patch)
                             setEditing(false)
                         }}
                         onCancel={() => setEditing(false)}
                     />
                 ) : (
-                    <button
-                        className="entry-name"
-                        onClick={onSelect}
-                        disabled={snap.pending.has('select')}
-                        aria-pressed={selected}
-                    >
-                        <span className="entry-name-text">{entry.name}</span>
-                        {selected && <span className="selected-tag">SELECTED</span>}
-                    </button>
+                    <>
+                        <button
+                            className="entry-name"
+                            onClick={onSelect}
+                            disabled={snap.pending.has('select')}
+                            aria-pressed={selected}
+                        >
+                            <span className="entry-name-text">{entry.name}</span>
+                            {selected && <span className="selected-tag">SELECTED</span>}
+                        </button>
+                        <HorseName name={entry.horse} className="entry-horse" />
+                    </>
                 )}
                 {entry.runs.length > 0 && (
                     <ul className="chips" aria-label={`Runs of ${entry.name}`}>
@@ -319,7 +328,13 @@ function EntryRow({
                         </button>
                     </>
                 )}
-                <button className="tool" aria-label={`Rename ${entry.name}`} onClick={() => setEditing(true)} disabled={editing}>
+                <button
+                    className="tool"
+                    aria-label={`Edit ${entry.name}`}
+                    title="Correct the name or the horse"
+                    onClick={() => setEditing(true)}
+                    disabled={editing}
+                >
                     ✎
                 </button>
                 <button
@@ -336,13 +351,23 @@ function EntryRow({
     )
 }
 
-function RenameInput({ initial, onDone, onCancel }: { initial: string; onDone: (name: string) => void; onCancel: () => void }) {
-    const [value, setValue] = useState(initial)
+/** Name and horse of a competitor, edited in place: Enter or leaving both fields saves, Escape cancels. */
+function EditEntry({
+    entry,
+    onDone,
+    onCancel,
+}: {
+    entry: Entry
+    onDone: (name: string, horse: string) => void
+    onCancel: () => void
+}) {
+    const [name, setName] = useState(entry.name)
+    const [horse, setHorse] = useState(entry.horse)
     const done = useRef(false)
     const finish = (commit: boolean) => {
         if (done.current) return
         done.current = true
-        if (commit) onDone(value.trim())
+        if (commit) onDone(name.trim(), horse.trim())
         else onCancel()
     }
     const onKey = (e: KeyboardEvent) => {
@@ -350,48 +375,83 @@ function RenameInput({ initial, onDone, onCancel }: { initial: string; onDone: (
         if (e.key === 'Escape') finish(false)
     }
     return (
-        <input
-            className="rename-input"
-            aria-label="New name"
-            autoFocus
-            value={value}
-            maxLength={100}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={onKey}
-            onBlur={() => finish(true)}
-        />
+        <div
+            className="edit-entry"
+            onBlur={(e) => {
+                // moving between the two fields is not leaving
+                if (!e.currentTarget.contains(e.relatedTarget)) finish(true)
+            }}
+        >
+            <input
+                className="rename-input"
+                aria-label="Competitor name"
+                autoFocus
+                value={name}
+                maxLength={100}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={onKey}
+            />
+            <input
+                className="rename-input rename-horse"
+                aria-label="Horse name"
+                placeholder="Horse (optional)"
+                value={horse}
+                maxLength={100}
+                onChange={(e) => setHorse(e.target.value)}
+                onKeyDown={onKey}
+            />
+        </div>
     )
 }
 
 function AddCompetitor() {
     const [snap, store] = useStore()
     const [name, setName] = useState('')
-    const latest = useRef('')
-    latest.current = name
+    const [horse, setHorse] = useState('')
+    const nameInput = useRef<HTMLInputElement>(null)
+    const horseInput = useRef<HTMLInputElement>(null)
+    const latest = useRef({ name, horse })
+    latest.current = { name, horse }
     const adding = snap.pending.has('entry:add')
 
-    // The input itself is never disabled: disabling would drop the focus, and the
-    // operator wants to type several names in a row.
+    // The inputs are never disabled: disabling would drop the focus, and the
+    // operator wants to type several competitors in a row.
     const submit = async (e: FormEvent) => {
         e.preventDefault()
-        const value = name.trim()
-        if (!value || adding) return
-        const r = await store.addEntry(value)
-        if (r.ok && latest.current.trim() === value) setName('')
+        const sent = { name: name.trim(), horse: horse.trim() }
+        if (!sent.name || adding) return
+        const fromHorse = document.activeElement === horseInput.current
+        const r = await store.addEntry(sent.name, sent.horse)
+        if (!r.ok) return
+        // Clear what was sent (not what has been typed since) and be ready for the next name.
+        if (latest.current.name.trim() === sent.name) setName('')
+        if (latest.current.horse.trim() === sent.horse) setHorse('')
+        if (fromHorse && document.activeElement === horseInput.current) nameInput.current?.focus()
     }
 
     return (
         <form className="add-competitor" onSubmit={submit}>
             <input
+                ref={nameInput}
                 aria-label="New competitor name"
-                placeholder="Add competitor — type name, Enter"
+                placeholder="Add competitor — name, Enter"
                 value={name}
                 maxLength={100}
                 onChange={(e) => setName(e.target.value)}
             />
-            <button className="btn" type="submit" disabled={adding || name.trim() === ''}>
-                Add
-            </button>
+            <div className="add-row">
+                <input
+                    ref={horseInput}
+                    aria-label="Horse name (optional)"
+                    placeholder="Horse (optional)"
+                    value={horse}
+                    maxLength={100}
+                    onChange={(e) => setHorse(e.target.value)}
+                />
+                <button className="btn" type="submit" disabled={adding || name.trim() === ''}>
+                    Add
+                </button>
+            </div>
         </form>
     )
 }

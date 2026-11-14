@@ -122,6 +122,57 @@ class ListTests(ArenaCase):
         self.assertEqual(Participant.objects.count(), 2)
         self.assertEqual(arena.snapshot(other)['entries'][0]['name'], 'Ala K.')
 
+    def horses(self, competition=None):
+        return [e['horse'] for e in arena.snapshot(competition or self.c)['entries']]
+
+    def test_horse_name_is_optional_and_tidied(self):
+        arena.add_entry(self.c, 'Ala')
+        arena.add_entry(self.c, 'Bea', None)
+        arena.add_entry(self.c, 'Cela', '   ')
+        arena.add_entry(self.c, 'Dora', '  Storm   Chaser ')
+        arena.add_entry(self.c, 'Ewa', 'x' * 100)
+        self.assertEqual(self.horses(), ['', '', '', 'Storm Chaser', 'x' * 100])
+
+    def test_a_bad_horse_name_adds_nobody(self):
+        for bad in (7, ['Stormy'], {'name': 'Stormy'}, True, 'x' * 101):
+            with self.assertRaises(arena.ArenaError):
+                arena.add_entry(self.c, 'Ala', bad)
+        self.assertEqual(self.names(), [])
+
+    def test_set_horse_names_renames_and_removes(self):
+        ala, bea = self.add('Ala', 'Bea')
+        arena.set_horse(ala, ' Stormy ')
+        self.assertEqual(self.horses(), ['Stormy', ''])
+        arena.set_horse(ala, 'Thunder')
+        arena.set_horse(bea, 'Stormy')                             # two kids may ride a Stormy each
+        self.assertEqual(self.horses(), ['Thunder', 'Stormy'])
+        arena.set_horse(ala, '')
+        arena.set_horse(bea, None)
+        self.assertEqual(self.horses(), ['', ''])
+        for bad in (7, 'x' * 101):
+            with self.assertRaises(arena.ArenaError):
+                arena.set_horse(ala, bad)
+        self.assertEqual(self.horses(), ['', ''])
+
+    def test_the_horse_belongs_to_the_entry_not_to_the_kid(self):
+        ala = arena.add_entry(self.c, 'Ala', 'Stormy')
+        other = arena.create_competition('Other')
+        there = arena.add_entry(other, 'Ala', 'Thunder')            # same kid, another horse there
+        self.assertEqual(there.participant_id, ala.participant_id)
+        self.assertEqual((self.horses(), self.horses(other)), (['Stormy'], ['Thunder']))
+        arena.rename_entry(ala, 'Alicja')                          # renaming the kid keeps the horse
+        arena.set_horse(there, '')
+        self.assertEqual((self.names(), self.horses(), self.horses(other)), (['Alicja'], ['Stormy'], ['']))
+
+    def test_the_horse_survives_reorder_and_a_run(self):
+        ala = arena.add_entry(self.c, 'Ala', 'Stormy')
+        bea = arena.add_entry(self.c, 'Bea')
+        arena.reorder(self.c, [str(bea.pk), str(ala.pk)])
+        arena.select(self.c, ala)
+        arena.set_capture(self.c, True)
+        arena.save_run(arena.open_run())
+        self.assertEqual(self.horses(), ['', 'Stormy'])
+
     def test_reorder(self):
         a, b, c = self.add('Ala', 'Bea', 'Cela')
         arena.reorder(self.c, [str(c.pk), str(a.pk), str(b.pk)])
